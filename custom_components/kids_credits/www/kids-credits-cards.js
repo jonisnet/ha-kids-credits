@@ -102,7 +102,12 @@
   // (rewards no longer have to top out at 15), with a tick + count at every
   // 15-credit boundary so a bigger goal (e.g. 60) still reads at a glance.
   function renderProgressBar(balance, threshold) {
-    const goal = Math.max(threshold, 1);
+    // The configured reward_threshold is a floor, not a hard ceiling - once
+    // balance actually grows past it (still on the default 15, or past a
+    // custom goal), the bar extends to the next 15-credit mark instead of
+    // just sitting maxed out at 100% while real progress keeps happening.
+    const nextFifteen = Math.max(15, Math.ceil(balance / 15) * 15);
+    const goal = Math.max(threshold, nextFifteen, 1);
     const pct = Math.max(0, Math.min(100, (balance / goal) * 100));
     let ticksHtml = "";
     for (let t = 15; t < goal; t += 15) {
@@ -1071,11 +1076,19 @@
           ${REQUEST_STYLE}
           :host { display: block; }
           ha-card { padding: 20px; }
+          .card-content { container-type: inline-size; }
           .kc-title { font-size: 1.4em; font-weight: 700; margin-bottom: 16px; text-align: center; }
           .kc-grid { display: flex; gap: 20px; flex-wrap: wrap; justify-content: center; }
           .kc-kid-tile {
             flex: 1 1 240px; max-width: 340px; text-align: center; border-radius: 16px;
             background: var(--secondary-background-color); padding: 20px 16px;
+          }
+          /* Narrow (e.g. a portrait tablet) - stack instead of squeezing
+             side by side, and let each kid use the full width rather than
+             staying capped at 340px. */
+          @container (max-width: 600px) {
+            .kc-grid { flex-direction: column; }
+            .kc-kid-tile { max-width: none; box-sizing: border-box; }
           }
           .kc-kid-icon { --mdc-icon-size: 192px; color: var(--primary-color); }
           .kc-kid-icon, img.kc-kid-icon { width: 192px; height: 192px; border-radius: 50%; object-fit: cover; cursor: pointer; }

@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.1.1
+
+- **Fixed: the progress bar stopped growing once a kid's balance passed
+  the configured reward goal** (still 15 by default) - it just sat
+  clamped at 100% instead of extending, defeating the whole point of the
+  15-credit tick marks added in 0.0.8. The configured goal is now a
+  floor, not a ceiling: once balance actually grows past it, the bar
+  extends to the next 15-credit mark, same as when a bigger goal is
+  configured on purpose.
+- **The kids-card's two kid tiles now stack on a narrow screen** (e.g. a
+  portrait tablet) instead of squeezing side by side, and each tile uses
+  the full available width once stacked instead of staying capped at
+  340px. Reacts to the card's own rendered width (CSS container query),
+  not the browser window, so it works correctly regardless of how many
+  dashboard columns the card ends up in.
+
 ## 0.1.0
 
 - **The card JS is no longer cached by the browser at all.** A
