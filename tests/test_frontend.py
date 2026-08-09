@@ -1,9 +1,11 @@
-"""Pure-logic tests for LovelaceResourceRegistration - no running Home
-Assistant instance required, just a faithful stand-in for the shape of
-hass.data["lovelace"] (verified against home-assistant/core's
+"""Pure-logic tests for LovelaceResourceRegistration and KidsCreditsCardView -
+no running Home Assistant instance required, just a faithful stand-in for the
+shape of hass.data["lovelace"] (verified against home-assistant/core's
 lovelace/resources.py: ResourceStorageCollection.async_items() /
 async_create_item() / async_update_item())."""
-from custom_components.kids_credits.frontend import LovelaceResourceRegistration
+from pathlib import Path
+
+from custom_components.kids_credits.frontend import KidsCreditsCardView, LovelaceResourceRegistration
 
 
 class FakeResources:
@@ -109,3 +111,14 @@ async def test_unexpected_internal_shape_change_falls_back_instead_of_raising():
     ok = await LovelaceResourceRegistration(hass, "/x/card.js").async_try_register("1.0.0")
 
     assert ok is False
+
+
+async def test_card_view_disables_caching():
+    view = KidsCreditsCardView("/x/card.js", Path(__file__))  # any real file path
+    response = await view.get(None)
+
+    cache_control = response.headers["Cache-Control"]
+    assert "no-store" in cache_control
+    assert "no-cache" in cache_control
+    assert response.headers["Pragma"] == "no-cache"
+    assert response.headers["Expires"] == "0"

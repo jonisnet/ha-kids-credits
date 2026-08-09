@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.1.0
+
+- **The card JS is no longer cached by the browser at all.** A
+  version-bumped resource URL (0.0.6+) only helps a *fresh* page load pick
+  up a new version - a tab that's already open (a kiosk tablet running
+  Fully Kiosk Browser for weeks, a phone tab left open) never asks the
+  server again on its own, so the version bump never reaches it either. A
+  hard refresh always fixed it, which confirmed it wasn't a registration
+  bug - the file itself just needed `Cache-Control: no-store`. It's a few
+  dozen KB, so serving it uncached costs nothing in practice and removes
+  the entire staleness class of bug, rather than narrowing the window it
+  can happen in. Replaces the static-path registration with a small
+  dedicated view (`KidsCreditsCardView`) that sets this on every request.
+
 ## 0.0.10
 
 - **Fixed the notification deep link opening the app's home page instead

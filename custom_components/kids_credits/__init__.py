@@ -17,7 +17,7 @@ from homeassistant.helpers.entity_component import EntityComponent
 from homeassistant.loader import async_get_integration
 
 from .const import CONF_KIDS, DEFAULT_KID_NAMES, DOMAIN
-from .frontend import LovelaceResourceRegistration
+from .frontend import KidsCreditsCardView, LovelaceResourceRegistration
 from .manager import KidsCreditsManager
 from .services import async_register_services, async_unregister_services
 
@@ -97,15 +97,11 @@ async def _async_register_frontend(hass: HomeAssistant) -> None:
     integration = await async_get_integration(hass, DOMAIN)
     js_path = f"{FRONTEND_URL_BASE}/{CARD_FILENAME}"
 
-    try:
-        from homeassistant.components.http import StaticPathConfig
-
-        await hass.http.async_register_static_paths(
-            [StaticPathConfig(FRONTEND_URL_BASE, str(www_path), cache_headers=False)]
-        )
-    except ImportError:
-        # Older HA core versions (pre 2024.7) use the sync registration call.
-        hass.http.register_static_path(FRONTEND_URL_BASE, str(www_path), cache_headers=False)
+    # A dedicated view instead of a static-path registration - it's the only
+    # way to force Cache-Control: no-store on this one file (see
+    # frontend.py's docstring for why that matters more than the resource
+    # URL's own version-bump).
+    hass.http.register_view(KidsCreditsCardView(js_path, www_path / CARD_FILENAME))
 
     # Prefer registering as a real Lovelace resource (see frontend.py for
     # why) - only fall back to the always-works-but-cache-flaky
