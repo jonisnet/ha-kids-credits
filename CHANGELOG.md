@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.0.5
 
 - **Icon tiles now show a short caption** (e.g. "Knutselen") instead of no
   text at all, and tapping one opens a confirm step showing the full task
