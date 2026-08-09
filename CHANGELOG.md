@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.0.6
+
+- **The card now registers itself as a real Lovelace resource** (the same
+  mechanism the "Add Resource" dialog and HACS's own "Plugin"-category repos
+  use) instead of only the lighter-weight `add_extra_js_url` injection.
+  Several HACS integrations that use `add_extra_js_url` (this one included)
+  have had reports of the card/its icons needing a manual browser
+  hard-refresh or a Companion App "reset frontend cache" after an update - a
+  real resource entry doesn't have that problem, since it goes through the
+  exact code path a manually-added resource does. Falls back to the old
+  injection automatically if a real resource can't be registered (YAML-mode
+  dashboards, or Lovelace not finished loading yet) - never a hard failure.
+
 ## 0.0.5
 
 - **Icon tiles now show a short caption** (e.g. "Knutselen") instead of no

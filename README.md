@@ -42,6 +42,16 @@ with a "Papa" view, a "Mama" view (each with one card per kid), and a shared
 
 Copy `custom_components/kids_credits` into your Home Assistant `custom_components/` folder and restart.
 
+### Card not showing up / stuck on an old version after an update?
+
+The card JS registers itself as a real Lovelace resource on startup (the
+same mechanism the "Add Resource" dialog uses), specifically to avoid the
+stale-card-after-update problem some HACS integrations have. If you're on a
+YAML-mode dashboard, or you updated but still see the old card, add the
+resource manually once: Settings → Dashboards → ⋮ → Resources → Add
+Resource → `/kids_credits_static/kids-credits-cards.js`, type JavaScript
+Module.
+
 ## Setup
 
 Settings → Devices & Services → Add integration → **Kids Credits**. You'll be asked for:

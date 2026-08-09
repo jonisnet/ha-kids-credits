@@ -17,6 +17,7 @@ from homeassistant.helpers.entity_component import EntityComponent
 from homeassistant.loader import async_get_integration
 
 from .const import CONF_KIDS, DEFAULT_KID_NAMES, DOMAIN
+from .frontend import LovelaceResourceRegistration
 from .manager import KidsCreditsManager
 from .services import async_register_services, async_unregister_services
 
@@ -67,6 +68,15 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await manager.async_unload()
 
     async_unregister_services(hass)
+
+    # Deliberately does NOT clear hass.data[f"{DOMAIN}_frontend_registered"]
+    # or unregister the static path - both are idempotent-per-hass-lifetime
+    # and safe to leave registered across a reload; re-registering the
+    # static path a second time raises. The Lovelace resource entry itself
+    # is fine to leave in place too (a reload isn't an uninstall) - only a
+    # real removal should delete it, which isn't something this integration
+    # can distinguish from a reload here, so it's left alone.
+
     return True
 
 
@@ -78,16 +88,14 @@ async def _async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> Non
 
 
 async def _async_register_frontend(hass: HomeAssistant) -> None:
-    """Serve the bundled Lovelace cards and register them as a frontend resource."""
+    """Serve the bundled Lovelace card JS and register it as a frontend resource."""
     if hass.data.get(f"{DOMAIN}_frontend_registered"):
         return
     hass.data[f"{DOMAIN}_frontend_registered"] = True
 
     www_path = Path(__file__).parent / "www"
     integration = await async_get_integration(hass, DOMAIN)
-    # Cache-bust on the integration version so browsers/HA's frontend don't
-    # keep serving a stale cached copy of the card JS after an update.
-    js_url = f"{FRONTEND_URL_BASE}/{CARD_FILENAME}?v={integration.version}"
+    js_path = f"{FRONTEND_URL_BASE}/{CARD_FILENAME}"
 
     try:
         from homeassistant.components.http import StaticPathConfig
@@ -99,13 +107,24 @@ async def _async_register_frontend(hass: HomeAssistant) -> None:
         # Older HA core versions (pre 2024.7) use the sync registration call.
         hass.http.register_static_path(FRONTEND_URL_BASE, str(www_path), cache_headers=False)
 
-    add_extra_js_url = None
-    try:
-        from homeassistant.components.frontend import add_extra_js_url
-    except ImportError:
-        add_extra_js_url = None
+    # Prefer registering as a real Lovelace resource (see frontend.py for
+    # why) - only fall back to the always-works-but-cache-flaky
+    # add_extra_js_url injection if that isn't possible right now.
+    registered_as_resource = await LovelaceResourceRegistration(hass, js_path).async_try_register(
+        integration.version
+    )
 
-    if add_extra_js_url is not None:
-        add_extra_js_url(hass, js_url)
+    if not registered_as_resource:
+        js_url = f"{js_path}?v={integration.version}"
+        try:
+            from homeassistant.components.frontend import add_extra_js_url
 
-    _LOGGER.info("Kids Credits cards served at %s (add them as Lovelace resources if not auto-loaded)", js_url)
+            add_extra_js_url(hass, js_url)
+        except ImportError:
+            pass
+
+    _LOGGER.info(
+        "Kids Credits cards served at %s (registered as a Lovelace resource: %s)",
+        js_path,
+        registered_as_resource,
+    )
