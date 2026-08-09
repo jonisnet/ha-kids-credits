@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.1.5
+
+- **Fixed the real root cause behind "I sometimes need to tap a button
+  twice."** Both cards re-rendered (full DOM teardown/rebuild) on *every*
+  dashboard-wide `hass` update, not just ones relevant to that card - on
+  a busy Home Assistant instance that's many times a second. If a
+  re-render landed between a tap's press and release, the button's DOM
+  node no longer existed to receive the click. Both cards now only
+  re-render when their own kid's (or kids') entity state actually
+  changed, which removes nearly all of those spurious re-renders instead
+  of just narrowing the timing window like the earlier rAF-batching fix
+  did. Verified live: 5 simulated unrelated state changes now trigger
+  zero re-renders, a real balance change still triggers exactly one.
+- **The notify-device remove button no longer looks like an error
+  indicator.** It reused the same solid red circle used elsewhere for
+  "delete this task/reward", which read as a warning/error badge next to
+  a device name rather than a remove action. It's now a plain neutral
+  button (only turning red on hover), matching the up/down reorder
+  buttons right above it.
+
 ## 0.1.4
 
 - **Expanded the spelregels formatting toolbar**: three heading sizes

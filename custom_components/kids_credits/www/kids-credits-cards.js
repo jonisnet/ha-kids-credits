@@ -58,6 +58,22 @@
     });
   }
 
+  // The `hass` setter fires on every dashboard-wide state change, not just
+  // ones this card cares about - on a busy instance that's many times a
+  // second. scheduleRerender's rAF coalescing narrows the window where a
+  // re-render can replace a button mid-tap (dropping the click, since the
+  // DOM node the gesture started on no longer exists), but doesn't close
+  // it: only re-rendering when THIS card's own entity/entities actually
+  // changed removes almost all of those spurious re-renders instead of
+  // just batching them.
+  function anyRelevantStateChanged(prevHass, hass, entityIds) {
+    if (!prevHass) return true;
+    for (const id of entityIds) {
+      if (prevHass.states[id] !== hass.states[id]) return true;
+    }
+    return false;
+  }
+
   function getKidEntities(hass) {
     if (!hass) return [];
     return Object.values(hass.states)
@@ -449,8 +465,13 @@
     }
 
     set hass(hass) {
+      const prevHass = this._hass;
       this._hass = hass;
-      this._safeRerender();
+      const kidId = this._config && this._config.kid_id;
+      const entityIds = kidId ? [`${DOMAIN}.${kidId}`] : [];
+      if (anyRelevantStateChanged(prevHass, hass, entityIds)) {
+        this._safeRerender();
+      }
     }
 
     get hass() {
@@ -901,8 +922,13 @@
     }
 
     set hass(hass) {
+      const prevHass = this._hass;
       this._hass = hass;
-      this._safeRerender();
+      const wanted = this._config && this._config.kids && this._config.kids.length ? this._config.kids : null;
+      const entityIds = wanted ? wanted.map((id) => `${DOMAIN}.${id}`) : getKidEntities(hass).map((st) => st.entity_id);
+      if (anyRelevantStateChanged(prevHass, hass, entityIds)) {
+        this._safeRerender();
+      }
     }
 
     get hass() {
@@ -1751,7 +1777,7 @@
               (id) => css`
                 <div class="kce-notify-row">
                   <span>${escapeAttr(id)}</span>
-                  <button type="button" class="kce-remove-btn" data-remove-notify="${escapeAttr(id)}">&times;</button>
+                  <button type="button" class="kce-notify-remove" title="Verwijderen" data-remove-notify="${escapeAttr(id)}">&times;</button>
                 </div>
               `
             )
@@ -1784,7 +1810,12 @@
             background: var(--card-background-color); color: var(--primary-text-color); cursor: pointer;
           }
           .kce-kid-move button:disabled { opacity: 0.3; cursor: default; }
-          .kce-notify-row { display: flex; align-items: center; justify-content: space-between; padding: 4px 0; }
+          .kce-notify-row { display: flex; align-items: center; justify-content: space-between; padding: 4px 0; gap: 8px; }
+          .kce-notify-remove {
+            width: 26px; height: 26px; flex-shrink: 0; border-radius: 6px; border: 1px solid var(--divider-color);
+            background: var(--card-background-color); color: var(--secondary-text-color); cursor: pointer; line-height: 1;
+          }
+          .kce-notify-remove:hover { background: var(--secondary-background-color); color: var(--error-color, #db4437); border-color: var(--error-color, #db4437); }
           .kce-notify-add { display: flex; gap: 6px; margin-top: 6px; }
           .kce-notify-add select {
             flex: 1; padding: 6px; border-radius: 6px; border: 1px solid var(--divider-color);
