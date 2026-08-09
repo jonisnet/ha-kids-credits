@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.0.4
 
 - **The kids card's "wat heb je gedaan" popup is now a full-screen grid of
   big icon-only tiles**, not a wall of text buttons - a kid picks the
@@ -9,7 +9,9 @@
   card's own task popup still shows both icon and text, since parents need
   to read it to confirm); the editor's task rows gained a small icon input
   next to the label. Falls back to a free-text field for anything not
-  pictured.
+  pictured. The default icons are plain emoji picked as placeholders -
+  swap any of them for a better one per task in the editor at any time, no
+  rush.
 
 ## 0.0.3
 
