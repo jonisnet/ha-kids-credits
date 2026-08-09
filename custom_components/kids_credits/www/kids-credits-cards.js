@@ -79,16 +79,39 @@
     return Object.keys((hass && hass.services && hass.services.notify) || {}).sort();
   }
 
+  // Every push notification this integration sends should open straight to
+  // the credits dashboard, not just the HA app's default landing page.
+  const DASHBOARD_URL = "https://home.jonishome.nl/sub-dash/credits-card";
+
   async function notifyAll(hass, notifyServiceIds, title, message) {
     if (!notifyServiceIds || !notifyServiceIds.length) return;
     for (const fullServiceId of notifyServiceIds) {
       const [notifyDomain, notifyService] = fullServiceId.split(".");
       try {
-        await hass.callService(notifyDomain, notifyService, { title, message });
+        await hass.callService(notifyDomain, notifyService, { title, message, data: { clickAction: DASHBOARD_URL } });
       } catch (err) {
         console.warn("Kids Credits: notify service call failed", fullServiceId, err);
       }
     }
+  }
+
+  // Shared by both cards - a bar that keeps extending as the goal grows
+  // (rewards no longer have to top out at 15), with a tick + count at every
+  // 15-credit boundary so a bigger goal (e.g. 60) still reads at a glance.
+  function renderProgressBar(balance, threshold) {
+    const goal = Math.max(threshold, 1);
+    const pct = Math.max(0, Math.min(100, (balance / goal) * 100));
+    let ticksHtml = "";
+    for (let t = 15; t < goal; t += 15) {
+      const pos = (t / goal) * 100;
+      ticksHtml += css`<div class="kc-progress-tick" style="left:${pos}%"><span>${t / 15}</span></div>`;
+    }
+    return css`
+      <div class="kc-progress-wrap">
+        <div class="kc-progress-bar" style="width:${pct}%"></div>
+        ${ticksHtml}
+      </div>
+    `;
   }
 
   function formatWhen(unixSeconds) {
@@ -460,6 +483,7 @@
           await this._hass.callService(notifyDomain, notifyService, {
             title: "Kids Credits",
             message: `🎉 ${kidName} heeft "${reward.label}" verdiend!`,
+            data: { clickAction: DASHBOARD_URL },
           });
         } catch (err) {
           console.warn("Kids Credits: notify service call failed", err);
@@ -692,7 +716,6 @@
       const name = st.attributes.friendly_name || kidId;
       const balance = Number(st.state) || 0;
       const threshold = st.attributes.reward_threshold || 15;
-      const pct = Math.max(0, Math.min(100, (balance / threshold) * 100));
       const groups = configGroups(this._config);
       const deductions = configDeductions(this._config);
       const rewards = configRewards(this._config, st);
@@ -713,6 +736,7 @@
         <style>
           ${MODAL_STYLE}
           ${REQUEST_STYLE}
+          :host { display: block; }
           ha-card { padding: 16px; }
           .kc-header { display: flex; align-items: center; gap: 12px; margin-bottom: 4px; }
           .kc-avatar-wrap { position: relative; flex-shrink: 0; }
@@ -723,8 +747,10 @@
           .kc-name:hover { text-decoration: underline; }
           .kc-actor { font-size: 0.8em; color: var(--secondary-text-color); }
           .kc-balance { font-size: 1.3em; font-weight: 700; color: var(--primary-color); white-space: nowrap; }
-          .kc-progress-wrap { height: 8px; border-radius: 4px; background: var(--divider-color); overflow: hidden; margin: 10px 0 14px; }
-          .kc-progress-bar { height: 100%; background: var(--primary-color); transition: width 0.3s ease; }
+          .kc-progress-wrap { position: relative; height: 8px; border-radius: 4px; background: var(--divider-color); margin: 10px 0 20px; }
+          .kc-progress-bar { height: 100%; border-radius: 4px; background: var(--primary-color); transition: width 0.3s ease; }
+          .kc-progress-tick { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--card-background-color); transform: translateX(-1px); }
+          .kc-progress-tick span { position: absolute; top: 100%; left: 50%; transform: translateX(-50%); margin-top: 3px; font-size: 0.68em; font-weight: 600; color: var(--secondary-text-color); }
           .kc-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
           .kc-chip {
             border: 1px solid var(--divider-color); background: var(--card-background-color); color: var(--primary-text-color);
@@ -778,7 +804,7 @@
               </div>
               <div class="kc-balance">${balance} credits</div>
             </div>
-            <div class="kc-progress-wrap"><div class="kc-progress-bar" style="width:${pct}%"></div></div>
+            ${renderProgressBar(balance, threshold)}
 
             <div class="kc-chips">
               <button class="kc-chip ${pendingCount ? "kc-chip-pending" : ""}" data-action="open-requests">📥 Verzoeken <span class="kc-chip-count">${pendingCount}</span></button>
@@ -1037,6 +1063,7 @@
         <style>
           ${MODAL_STYLE}
           ${REQUEST_STYLE}
+          :host { display: block; }
           ha-card { padding: 20px; }
           .kc-title { font-size: 1.4em; font-weight: 700; margin-bottom: 16px; text-align: center; }
           .kc-grid { display: flex; gap: 20px; flex-wrap: wrap; justify-content: center; }
@@ -1050,8 +1077,10 @@
           .kc-kid-name:hover { text-decoration: underline; }
           .kc-kid-balance { font-size: 2.4em; font-weight: 800; color: var(--primary-color); line-height: 1; }
           .kc-kid-unit { font-size: 0.5em; font-weight: 500; color: var(--secondary-text-color); }
-          .kc-progress-wrap { height: 14px; border-radius: 7px; background: var(--divider-color); overflow: hidden; margin: 12px 0 6px; }
+          .kc-progress-wrap { position: relative; height: 14px; border-radius: 7px; background: var(--divider-color); margin: 12px 0 16px; }
           .kc-progress-bar { height: 100%; border-radius: 7px; background: linear-gradient(90deg, var(--primary-color), var(--success-color, #43a047)); transition: width 0.4s ease; }
+          .kc-progress-tick { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--card-background-color); transform: translateX(-1px); }
+          .kc-progress-tick span { position: absolute; top: 100%; left: 50%; transform: translateX(-50%); margin-top: 3px; font-size: 0.7em; font-weight: 600; color: var(--secondary-text-color); }
           .kc-progress-label { font-size: 0.85em; color: var(--secondary-text-color); }
           .kc-empty { color: var(--secondary-text-color); text-align: center; padding: 20px 0; }
           .kc-history-row-full { padding: 8px 0; border-bottom: 1px solid var(--divider-color); text-align: left; }
@@ -1113,7 +1142,6 @@
       const name = st.attributes.friendly_name || st.attributes.kid_id;
       const balance = Number(st.state) || 0;
       const threshold = st.attributes.reward_threshold || 15;
-      const pct = Math.max(0, Math.min(100, (balance / threshold) * 100));
       const ready = balance >= threshold;
       const kidId = escapeAttr(st.attributes.kid_id);
       const requests = st.attributes.requests || [];
@@ -1135,7 +1163,7 @@
           <span data-action="open-history" data-kid="${kidId}">${renderAvatar(st, "kc-kid-icon")}</span>
           <div class="kc-kid-name" data-action="open-history" data-kid="${kidId}">${escapeAttr(name)}</div>
           <div class="kc-kid-balance">${balance}<span class="kc-kid-unit"> credits</span></div>
-          <div class="kc-progress-wrap"><div class="kc-progress-bar" style="width:${pct}%"></div></div>
+          ${renderProgressBar(balance, threshold)}
           <div class="kc-progress-label">${ready ? "Beloning verdiend! 🎉" : `nog ${threshold - balance} tot een beloning`}</div>
           ${rewardButtonHtml}
           <button class="kc-request-btn" data-action="request-credit" data-kid="${kidId}">✋ Ik heb een klus gedaan!</button>
@@ -1737,10 +1765,175 @@
     }
   }
 
+  // --------------------------------------------------------------------
+  // Rules card - a collapsible, editable block of house rules. Purely
+  // static/config-driven (no service calls, no live entity data beyond the
+  // ambient theme), so no hass-triggered re-rendering is needed.
+  // --------------------------------------------------------------------
+  const DEFAULT_RULES = [
+    "## Spelregels",
+    "",
+    "- Voor elke klus die je doet krijg je credits.",
+    "- Bij genoeg credits mag je een beloning kiezen.",
+    "- Sparen mag: hoe meer credits, hoe grotere beloning.",
+    "- Rotzooien of niet luisteren kan credits kosten.",
+  ].join("\n");
+
+  // Deliberately tiny - just enough markdown for a rules list (headings,
+  // bullet lists, paragraphs, bold/italic), not a general parser.
+  function renderRulesMarkdown(text) {
+    const lines = escapeAttr(text || "").split("\n");
+    let html = "";
+    let inList = false;
+    const closeList = () => {
+      if (inList) {
+        html += "</ul>";
+        inList = false;
+      }
+    };
+    for (const rawLine of lines) {
+      const line = rawLine.trim();
+      if (!line) {
+        closeList();
+        continue;
+      }
+      const heading = line.match(/^(#{1,3})\s+(.*)/);
+      if (heading) {
+        closeList();
+        const level = heading[1].length + 2;
+        html += `<h${level}>${heading[2]}</h${level}>`;
+        continue;
+      }
+      if (line.startsWith("- ")) {
+        if (!inList) {
+          html += "<ul>";
+          inList = true;
+        }
+        html += `<li>${line.slice(2)}</li>`;
+        continue;
+      }
+      closeList();
+      html += `<p>${line}</p>`;
+    }
+    closeList();
+    return html.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>").replace(/\*(.+?)\*/g, "<em>$1</em>");
+  }
+
+  class KidsCreditsRulesCard extends HTMLElement {
+    constructor() {
+      super();
+      this.attachShadow({ mode: "open" });
+      this._config = {};
+    }
+
+    setConfig(config) {
+      this._config = config || {};
+      this._render();
+    }
+
+    set hass(hass) {
+      this._hass = hass;
+    }
+
+    get hass() {
+      return this._hass;
+    }
+
+    getCardSize() {
+      return 2;
+    }
+
+    static getStubConfig() {
+      return { title: "Spelregels", rules: DEFAULT_RULES, collapsed: true };
+    }
+
+    static getConfigElement() {
+      return document.createElement("kids-credits-rules-card-editor");
+    }
+
+    _render() {
+      if (!this.shadowRoot) return;
+      const title = this._config.title || "Spelregels";
+      const rules = this._config.rules || DEFAULT_RULES;
+      const collapsed = this._config.collapsed !== false;
+      this.shadowRoot.innerHTML = css`
+        <style>
+          :host { display: block; }
+          ha-card { padding: 4px 16px; }
+          details summary { padding: 12px 0; font-weight: 700; font-size: 1.05em; cursor: pointer; list-style: none; display: flex; align-items: center; gap: 8px; color: var(--primary-text-color); }
+          details summary::-webkit-details-marker { display: none; }
+          details summary::before { content: "▸"; display: inline-block; transition: transform 0.15s ease; }
+          details[open] summary::before { transform: rotate(90deg); }
+          .kc-rules-body { padding: 0 0 16px; color: var(--primary-text-color); }
+          .kc-rules-body h4, .kc-rules-body h5 { margin: 10px 0 4px; }
+          .kc-rules-body p { margin: 6px 0; }
+          .kc-rules-body ul { margin: 4px 0; padding-left: 20px; }
+          .kc-rules-body li { margin: 2px 0; }
+        </style>
+        <ha-card>
+          <details ${collapsed ? "" : "open"}>
+            <summary>${escapeAttr(title)}</summary>
+            <div class="kc-rules-body">${renderRulesMarkdown(rules)}</div>
+          </details>
+        </ha-card>
+      `;
+    }
+  }
+
+  class KidsCreditsRulesCardEditor extends HTMLElement {
+    constructor() {
+      super();
+      this.attachShadow({ mode: "open" });
+      this._config = {};
+    }
+
+    setConfig(config) {
+      this._config = config || {};
+      this._render();
+    }
+
+    set hass(hass) {
+      this._hass = hass;
+    }
+
+    _update(patch) {
+      this._config = { ...this._config, ...patch };
+      fireConfigChanged(this, this._config);
+    }
+
+    _render() {
+      this.shadowRoot.innerHTML = css`
+        <style>
+          ${EDITOR_STYLE}
+          textarea {
+            width: 100%; min-height: 160px; padding: 8px; border-radius: 6px; border: 1px solid var(--divider-color);
+            background: var(--card-background-color); color: var(--primary-text-color); font-family: inherit; box-sizing: border-box;
+          }
+        </style>
+        <div class="kce-field">
+          <label>Titel</label>
+          <input type="text" id="rc-title" value="${escapeAttr(this._config.title || "Spelregels")}" />
+        </div>
+        <div class="kce-field">
+          <label><input type="checkbox" id="rc-collapsed" ${this._config.collapsed !== false ? "checked" : ""} /> Standaard ingeklapt</label>
+        </div>
+        <div class="kce-field">
+          <label>Regels (markdown: # kop, - lijst, **vet**)</label>
+          <textarea id="rc-rules">${escapeAttr(this._config.rules || DEFAULT_RULES)}</textarea>
+        </div>
+      `;
+      this.shadowRoot.querySelector("#rc-title").addEventListener("change", (e) => this._update({ title: e.target.value }));
+      this.shadowRoot.querySelector("#rc-collapsed").addEventListener("change", (e) => this._update({ collapsed: e.target.checked }));
+      this.shadowRoot.querySelector("#rc-rules").addEventListener("change", (e) => this._update({ rules: e.target.value }));
+    }
+  }
+
   customElements.define("kids-credits-parent-card", KidsCreditsParentCard);
   customElements.define("kids-credits-kids-card", KidsCreditsKidsCard);
   customElements.define("kids-credits-parent-card-editor", KidsCreditsParentCardEditor);
   customElements.define("kids-credits-kids-card-editor", KidsCreditsKidsCardEditor);
+  customElements.define("kids-credits-rules-card", KidsCreditsRulesCard);
+  customElements.define("kids-credits-rules-card-editor", KidsCreditsRulesCardEditor);
 
   window.customCards = window.customCards || [];
   window.customCards.push(
@@ -1753,6 +1946,11 @@
       type: "kids-credits-kids-card",
       name: "Kids Credits - Kinderen",
       description: "Alleen-lezen overzicht van de credits per kind, voor een gedeeld dashboard.",
+    },
+    {
+      type: "kids-credits-rules-card",
+      name: "Kids Credits - Spelregels",
+      description: "In-/uitklapbare kaart met de huisregels voor het credit-systeem.",
     }
   );
 })();

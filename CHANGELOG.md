@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.0.8
+
+- **Fixed the cards not using the available width.** Both custom elements
+  were missing `:host { display: block; }`, so - depending on the
+  dashboard/browser - they could size to their content instead of filling
+  their column, which is what was behind the "these dimensions don't look
+  right" reports on both a wide browser window and the kids' tablet. The
+  progress bar, chip row, and everything else now genuinely stretches to
+  the card's real width.
+- **The progress bar now extends past 15 credits and gets tick marks.**
+  A reward goal above 15 (e.g. 60) now shows a tick + number (1, 2, 3...)
+  at every 15-credit mark along the bar instead of just being one longer
+  featureless bar, so bigger goals stay readable at a glance.
+- **New `kids-credits-rules-card`**: a small collapsible ("spelregels")
+  card for the family's house rules, using a native `<details>` element
+  (no extra JS needed for the collapse) with an editable `rules` markdown
+  field (headings, bullet lists, bold/italic) in the visual editor.
+- **Every push notification now deep-links to the credits dashboard**
+  (`https://home.jonishome.nl/sub-dash/credits-card`) instead of just
+  opening the app to its default page.
+- Example dashboard now shows one kids-card instance covering both kids
+  (not one per kid) - the way to keep everything in a single card on a
+  shared tablet.
+
 ## 0.0.7
 
 - **Fixed a real bug: the manual +/- toekenning on the parent card sometimes

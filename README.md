@@ -171,7 +171,25 @@ The kids card's editor has a **"Pushbericht naar bij een verzoek"**
 checklist, populated from your existing `notify.*` services — tick every
 phone that should be pinged. The moment a kid submits a credit or reward
 request, all of them get a notification naming the kid and what they're
-asking for, so a parent doesn't need the dashboard open to notice.
+asking for, so a parent doesn't need the dashboard open to notice. Every
+notification this integration sends (request pings and reward-redeemed
+pings) opens straight to the credits dashboard when tapped.
+
+### The progress bar
+
+Extends however far the configured reward goal needs it to, with a tick
+mark and a number at every 15-credit mark (1, 2, 3...) so a bigger goal
+(e.g. 60 credits) still reads at a glance instead of just being one long
+featureless bar.
+
+### Spelregels (rules) card
+
+`kids-credits-rules-card` - a small collapsible card (`<details>`, native
+browser collapse, no extra JS) for the family's house rules. Config:
+`title`, `collapsed` (default `true`), and `rules` (a markdown string -
+`#`/`##`/`###` headings, `- ` bullet lists, `**bold**`/`*italic*`,
+paragraphs; nothing fancier than that). Edit it visually the same way as
+the other cards.
 
 ## Services
 

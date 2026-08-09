@@ -43,7 +43,12 @@ views:
     path: kinderen
     icon: mdi:emoticon-happy
     cards:
+      # One instance with both kids (not one card per kid) - this is what
+      # keeps everything on a shared kids tablet in a single card instead of
+      # scrolling between separate ones.
       - type: custom:kids-credits-kids-card
         title: Onze credits
         # kids: [limanah, aline]   # leeg/weggelaten = toon alle kinderen
         # notify_services: [notify.mobile_app_iphone_papa, notify.mobile_app_iphone_mama]
+      - type: custom:kids-credits-rules-card
+        title: Spelregels
