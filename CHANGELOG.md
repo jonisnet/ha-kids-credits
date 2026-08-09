@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+- **The kids card's "wat heb je gedaan" popup is now a full-screen grid of
+  big icon-only tiles**, not a wall of text buttons - a kid picks the
+  picture of the task they did instead of having to read anything. Each
+  task now has an editable emoji `icon` alongside its `label` (the parent
+  card's own task popup still shows both icon and text, since parents need
+  to read it to confirm); the editor's task rows gained a small icon input
+  next to the label. Falls back to a free-text field for anything not
+  pictured.
+
 ## 0.0.3
 
 - **Entities moved from `sensor.<naam>` to their own `kids_credits.<naam>`

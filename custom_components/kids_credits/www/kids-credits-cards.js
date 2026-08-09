@@ -185,6 +185,20 @@
     .kc-reject-btn { background: var(--secondary-background-color); color: var(--primary-text-color); }
     .kc-request-group-label { font-size: 0.8em; font-weight: 700; color: var(--secondary-text-color); margin: 12px 0 2px; text-transform: uppercase; letter-spacing: 0.02em; }
     .kc-request-group-label:first-child { margin-top: 0; }
+    .kc-icon-grid {
+      display: grid; grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); gap: 12px;
+      margin-bottom: 16px;
+    }
+    .kc-icon-tile {
+      aspect-ratio: 1; border: none; border-radius: 20px; background: var(--secondary-background-color);
+      cursor: pointer; display: flex; align-items: center; justify-content: center;
+      transition: transform 0.1s ease, background 0.1s ease;
+    }
+    .kc-icon-tile:hover, .kc-icon-tile:active { background: var(--primary-color); }
+    @media (prefers-reduced-motion: no-preference) {
+      .kc-icon-tile:active { transform: scale(0.92); }
+    }
+    .kc-icon-tile-emoji { font-size: 2.4em; line-height: 1; }
     .kc-request-form textarea {
       width: 100%; min-height: 70px; padding: 8px; border-radius: 8px; border: 1px solid var(--divider-color);
       background: var(--card-background-color); color: var(--primary-text-color); font-family: inherit; resize: vertical;
@@ -207,54 +221,62 @@
   // misbehavior - those default to 1 and get a stepper in the popup so the
   // amount is adjustable per click rather than silently guessed.
   // --------------------------------------------------------------------
+  // Each task is { icon, label }. `icon` is a plain emoji (not mdi:) so it
+  // renders identically everywhere with zero extra markup - kept editable
+  // per task in the editor. normalizeTask() below accepts a legacy plain
+  // string too, so an older card config with string-only tasks still works.
   const DEFAULT_GROUPS = [
     {
       points: 5,
       label: "5 credits",
       tasks: [
-        "20 minuten serieus knutselen of tekenen/kleuren (zonder tablet, zelf opruimen)",
-        "20 minuten hardop voorlezen uit een boek",
-        "Een puzzel maken in een oefen- of puzzelboekje",
+        { icon: "🎨", label: "20 minuten serieus knutselen of tekenen/kleuren (zonder tablet, zelf opruimen)" },
+        { icon: "📖", label: "20 minuten hardop voorlezen uit een boek" },
+        { icon: "🧩", label: "Een puzzel maken in een oefen- of puzzelboekje" },
       ],
     },
     {
       points: 3,
       label: "3 credits",
       tasks: [
-        "Vuile was in de wasmand doen en in de badkamer zetten (donderdag)",
-        "Bed opmaken (deze week)",
-        "Kamer opruimen, ook stofzuigen, bureau en prullenbak legen",
+        { icon: "👕", label: "Vuile was in de wasmand doen en in de badkamer zetten (donderdag)" },
+        { icon: "🛏️", label: "Bed opmaken (deze week)" },
+        { icon: "🧹", label: "Kamer opruimen, ook stofzuigen, bureau en prullenbak legen" },
       ],
     },
     {
       points: 2,
       label: "2 credits",
       tasks: [
-        "Vaatwasser uitruimen",
-        "Kleine tafel opruimen en nat afnemen",
-        "Grote tafel opruimen en nat afnemen",
-        "Papiermand legen in de papiercontainer (blauwe deksel)",
-        "Grote zwarte prullenbak legen",
-        "Wasmachine aanzetten met vuile was uit 1 wasmand (dinsdag/vrijdag)",
+        { icon: "🍽️", label: "Vaatwasser uitruimen" },
+        { icon: "🧽", label: "Kleine tafel opruimen en nat afnemen" },
+        { icon: "🪑", label: "Grote tafel opruimen en nat afnemen" },
+        { icon: "📄", label: "Papiermand legen in de papiercontainer (blauwe deksel)" },
+        { icon: "🗑️", label: "Grote zwarte prullenbak legen" },
+        { icon: "🧺", label: "Wasmachine aanzetten met vuile was uit 1 wasmand (dinsdag/vrijdag)" },
       ],
     },
     {
       points: 1,
       label: "1 credit (huishoudelijke taak)",
       tasks: [
-        "Boodschappen doen",
-        "Wassen draaien",
-        "Toiletten reinigen",
-        "Was opvouwen/opruimen",
-        "Kattenbak schoon",
-        "Huiskamer opruimen",
-        "Sanitair reinigen",
-        "Afvalbakken legen",
-        "Stofzuigen",
-        "Vegen",
+        { icon: "🛒", label: "Boodschappen doen" },
+        { icon: "🌀", label: "Wassen draaien" },
+        { icon: "🚽", label: "Toiletten reinigen" },
+        { icon: "👚", label: "Was opvouwen/opruimen" },
+        { icon: "🐱", label: "Kattenbak schoon" },
+        { icon: "🛋️", label: "Huiskamer opruimen" },
+        { icon: "🚿", label: "Sanitair reinigen" },
+        { icon: "🗑️", label: "Afvalbakken legen" },
+        { icon: "🌪️", label: "Stofzuigen" },
+        { icon: "🧹", label: "Vegen" },
       ],
     },
   ];
+
+  function normalizeTask(task) {
+    return typeof task === "string" ? { icon: "⭐", label: task } : task;
+  }
 
   const DEFAULT_DEDUCTIONS = [
     "Iemand geschopt, geslagen of gekrabd",
@@ -282,15 +304,15 @@
   // against wiping it - see FOCUSABLE_INPUT_SELECTOR / modal-open checks
   // in each card's _safeRerender().
   // --------------------------------------------------------------------
-  function showModal(shadowRoot, titleText, bodyHtml) {
+  function showModal(shadowRoot, titleText, bodyHtml, { fullscreen = false, bigClose = false } = {}) {
     hideModal(shadowRoot);
     const backdrop = document.createElement("div");
-    backdrop.className = "kc-modal-backdrop";
+    backdrop.className = "kc-modal-backdrop" + (fullscreen ? " kc-modal-backdrop-fullscreen" : "");
     backdrop.innerHTML = css`
-      <div class="kc-modal">
+      <div class="kc-modal ${fullscreen ? "kc-modal-fullscreen" : ""}">
         <div class="kc-modal-header">
           <span>${escapeAttr(titleText)}</span>
-          <button class="kc-modal-close" data-action="close-modal">&times;</button>
+          <button class="kc-modal-close ${bigClose ? "kc-modal-close-big" : ""}" data-action="close-modal">&times;</button>
         </div>
         <div class="kc-modal-body">${bodyHtml}</div>
       </div>
@@ -320,6 +342,10 @@
       display: flex; flex-direction: column; overflow: hidden;
       box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
     }
+    .kc-modal-backdrop-fullscreen { padding: 0; }
+    .kc-modal-fullscreen {
+      max-width: none; width: 100%; height: 100%; max-height: none; border-radius: 0;
+    }
     .kc-modal-header {
       display: flex; align-items: center; justify-content: space-between;
       padding: 14px 16px; font-weight: 600; border-bottom: 1px solid var(--divider-color);
@@ -327,6 +353,10 @@
     .kc-modal-close {
       background: none; border: none; font-size: 1.4em; line-height: 1; cursor: pointer;
       color: var(--secondary-text-color); padding: 0 4px;
+    }
+    .kc-modal-close-big {
+      font-size: 2em; width: 44px; height: 44px; border-radius: 50%;
+      background: var(--secondary-background-color); display: flex; align-items: center; justify-content: center;
     }
     .kc-modal-body { padding: 12px 16px; overflow-y: auto; }
   `;
@@ -430,11 +460,13 @@
 
     _openGroupModal(kidId, group) {
       const body = group.tasks
+        .map(normalizeTask)
         .map(
           (task) => css`
-            <button class="kc-modal-list-btn" data-action="award-modal" data-amount="${group.points}" data-reason="${escapeAttr(task)}">
+            <button class="kc-modal-list-btn" data-action="award-modal" data-amount="${group.points}" data-reason="${escapeAttr(task.label)}">
               <span class="kc-modal-list-amount">+${group.points}</span>
-              <span>${escapeAttr(task)}</span>
+              <span class="kc-modal-list-icon">${escapeAttr(task.icon)}</span>
+              <span>${escapeAttr(task.label)}</span>
             </button>
           `
         )
@@ -691,6 +723,7 @@
           .kc-modal-list-btn:hover:not([disabled]) { background: var(--secondary-background-color); }
           .kc-modal-list-btn[disabled] { opacity: 0.4; cursor: default; }
           .kc-modal-list-amount { font-weight: 700; color: var(--primary-color); min-width: 2.2em; }
+          .kc-modal-list-icon { font-size: 1.3em; }
           .kc-modal-deduct-row { display: flex; align-items: center; border-bottom: 1px solid var(--divider-color); }
           .kc-modal-deduct-row .kc-modal-list-btn { border-bottom: none; flex: 1; }
           .kc-deduct-amount { color: var(--error-color, #db4437) !important; }
@@ -835,42 +868,40 @@
     }
 
     _openRequestFormModal(kidId) {
-      // Task buttons, not a text box: a 6-year-old who can't read/write
-      // well yet can still tap a picture of the task they did. Falls back
-      // to a free-text option at the bottom for anything not in the list.
-      const groups = configGroups(this._config);
-      const groupsHtml = groups
+      // Big icon tiles, no visible text: a 6-year-old who can't read/write
+      // well yet can still tap the picture of the task they did. No
+      // credit-tier headers either (those are text too, and the amount is
+      // only ever a suggestion - the parent confirms it on approval). Falls
+      // back to a free-text option at the bottom for anything not pictured.
+      const allTasks = configGroups(this._config).flatMap((group) =>
+        group.tasks.map(normalizeTask).map((task) => ({ ...task, points: group.points }))
+      );
+
+      const tilesHtml = allTasks
         .map(
-          (group) => css`
-            <div class="kc-request-group-label">${escapeAttr(group.label)}</div>
-            ${group.tasks
-              .map(
-                (task) => css`
-                  <button
-                    class="kc-modal-list-btn"
-                    data-action="submit-task-request"
-                    data-amount="${group.points}"
-                    data-reason="${escapeAttr(task)}"
-                  >
-                    <span class="kc-modal-list-amount">+${group.points}</span>
-                    <span>${escapeAttr(task)}</span>
-                  </button>
-                `
-              )
-              .join("")}
+          (task) => css`
+            <button
+              class="kc-icon-tile"
+              data-action="submit-task-request"
+              data-amount="${task.points}"
+              data-reason="${escapeAttr(task.label)}"
+              title="${escapeAttr(task.label)}"
+            >
+              <span class="kc-icon-tile-emoji">${escapeAttr(task.icon)}</span>
+            </button>
           `
         )
         .join("");
 
       const body = css`
-        ${groupsHtml}
+        <div class="kc-icon-grid">${tilesHtml}</div>
         <div class="kc-request-form">
           <div class="kc-request-group-label">Iets anders</div>
           <textarea id="kc-request-reason" placeholder="Typ hier wat je hebt gedaan"></textarea>
           <button class="kc-request-submit" data-action="submit-text-request">Verzoek versturen</button>
         </div>
       `;
-      const modal = showModal(this.shadowRoot, "Credits aanvragen", body);
+      const modal = showModal(this.shadowRoot, "Wat heb je gedaan?", body, { fullscreen: true, bigClose: true });
       modal.querySelectorAll('[data-action="submit-task-request"]').forEach((btn) => {
         btn.addEventListener("click", async () => {
           await callService(this._hass, "request_credit", {
@@ -1070,6 +1101,7 @@
     .kce-group-row input[type="text"] { flex: 1; }
     .kce-task-row { display: flex; gap: 6px; align-items: center; margin-bottom: 6px; }
     .kce-task-row input { flex: 1; padding: 6px 8px; border-radius: 6px; border: 1px solid var(--divider-color); background: var(--card-background-color); color: var(--primary-text-color); }
+    .kce-task-row input.kce-task-icon { flex: none; width: 44px; text-align: center; font-size: 1.1em; }
     .kce-remove-btn {
       width: 24px; height: 24px; border-radius: 50%; border: none; background: var(--error-color, #db4437);
       color: #fff; cursor: pointer; flex-shrink: 0; line-height: 1;
@@ -1110,10 +1142,12 @@
       .map((group, idx) => {
         const expanded = !!expandedGroups[idx];
         const tasksHtml = group.tasks
+          .map(normalizeTask)
           .map(
             (task, taskIdx) => css`
               <div class="kce-task-row">
-                <input type="text" value="${escapeAttr(task)}" data-group="${idx}" data-task="${taskIdx}" data-field="task" />
+                <input type="text" class="kce-task-icon" value="${escapeAttr(task.icon)}" data-group="${idx}" data-task="${taskIdx}" data-field="task-icon" title="Icoon (emoji)" />
+                <input type="text" value="${escapeAttr(task.label)}" data-group="${idx}" data-task="${taskIdx}" data-field="task-label" placeholder="Taak" />
                 <button class="kce-remove-btn" data-action="remove-task" data-group="${idx}" data-task="${taskIdx}">&times;</button>
               </div>
             `
@@ -1162,19 +1196,22 @@
       });
     });
 
-    root.querySelectorAll('[data-field="task"]').forEach((el) => {
+    root.querySelectorAll('[data-field="task-icon"], [data-field="task-label"]').forEach((el) => {
       el.addEventListener("change", () => {
-        const groups = configGroups(self._config).map((g) => ({ ...g, tasks: [...g.tasks] }));
-        groups[parseInt(el.dataset.group, 10)].tasks[parseInt(el.dataset.task, 10)] = el.value;
+        const groups = configGroups(self._config).map((g) => ({ ...g, tasks: g.tasks.map(normalizeTask).map((t) => ({ ...t })) }));
+        const gIdx = parseInt(el.dataset.group, 10);
+        const tIdx = parseInt(el.dataset.task, 10);
+        if (el.dataset.field === "task-icon") groups[gIdx].tasks[tIdx].icon = el.value;
+        else groups[gIdx].tasks[tIdx].label = el.value;
         self._updateGroups(groups);
       });
     });
 
     root.querySelectorAll('[data-action="add-task"]').forEach((el) => {
       el.addEventListener("click", () => {
-        const groups = configGroups(self._config).map((g) => ({ ...g, tasks: [...g.tasks] }));
+        const groups = configGroups(self._config).map((g) => ({ ...g, tasks: g.tasks.map(normalizeTask).map((t) => ({ ...t })) }));
         const idx = parseInt(el.dataset.group, 10);
-        groups[idx].tasks.push("Nieuwe taak");
+        groups[idx].tasks.push({ icon: "⭐", label: "Nieuwe taak" });
         self._expanded.groups[idx] = true;
         self._updateGroups(groups);
       });
