@@ -1105,7 +1105,7 @@
           }
           .kc-kid-icon { --mdc-icon-size: 192px; color: var(--primary-color); }
           .kc-kid-icon, img.kc-kid-icon { width: 192px; height: 192px; border-radius: 50%; object-fit: cover; cursor: pointer; }
-          .kc-kid-name { font-size: 1.2em; font-weight: 700; margin: 8px 0 4px; cursor: pointer; }
+          .kc-kid-name { font-size: 2em; font-weight: 700; margin: 8px 0 4px; cursor: pointer; }
           .kc-kid-name:hover { text-decoration: underline; }
           .kc-kid-balance { font-size: 2.4em; font-weight: 800; color: var(--primary-color); line-height: 1; }
           .kc-kid-unit { font-size: 0.5em; font-weight: 500; color: var(--secondary-text-color); }
@@ -1712,7 +1712,9 @@
       const allKids = getKidEntities(hass);
       const groupsHtml = groupsSectionHtml(config, this._expanded.groups);
       const notifyServices = getNotifyServices(hass);
-      const selectedNotify = new Set(config.notify_services || []);
+      const notifyServiceIds = notifyServices.map((svc) => `notify.${svc}`);
+      const selectedNotifyList = (config.notify_services || []).filter((id) => notifyServiceIds.includes(id));
+      const availableNotify = notifyServiceIds.filter((id) => !selectedNotifyList.includes(id));
 
       // config.kids (when set) is both "which kids show" AND the order they
       // show in - configured ids first (in their saved order), then any
@@ -1743,18 +1745,30 @@
             .join("")
         : `<div class="kce-empty">Geen kinderen gevonden - stel Kids Credits eerst in.</div>`;
 
-      const notifyCheckboxesHtml = notifyServices.length
-        ? notifyServices
-            .map((svc) => {
-              const fullId = `notify.${svc}`;
-              return css`
-                <label class="kce-checkbox-row">
-                  <input type="checkbox" data-notify="${escapeAttr(fullId)}" ${selectedNotify.has(fullId) ? "checked" : ""} />
-                  ${escapeAttr(fullId)}
-                </label>
-              `;
-            })
+      const notifyRowsHtml = selectedNotifyList.length
+        ? selectedNotifyList
+            .map(
+              (id) => css`
+                <div class="kce-notify-row">
+                  <span>${escapeAttr(id)}</span>
+                  <button type="button" class="kce-remove-btn" data-remove-notify="${escapeAttr(id)}">&times;</button>
+                </div>
+              `
+            )
             .join("")
+        : `<div class="kce-empty">Nog geen apparaten toegevoegd.</div>`;
+
+      const notifyAddHtml = availableNotify.length
+        ? css`
+            <div class="kce-notify-add">
+              <select id="kce-notify-select">
+                ${availableNotify.map((id) => `<option value="${escapeAttr(id)}">${escapeAttr(id)}</option>`).join("")}
+              </select>
+              <button type="button" class="kce-add-btn" id="kce-notify-add-btn">+ Toevoegen</button>
+            </div>
+          `
+        : notifyServices.length
+        ? `<div class="kce-hint">Alle beschikbare apparaten zijn al toegevoegd.</div>`
         : `<div class="kce-empty">Geen notify-services gevonden.</div>`;
 
       this.shadowRoot.innerHTML = css`
@@ -1770,6 +1784,12 @@
             background: var(--card-background-color); color: var(--primary-text-color); cursor: pointer;
           }
           .kce-kid-move button:disabled { opacity: 0.3; cursor: default; }
+          .kce-notify-row { display: flex; align-items: center; justify-content: space-between; padding: 4px 0; }
+          .kce-notify-add { display: flex; gap: 6px; margin-top: 6px; }
+          .kce-notify-add select {
+            flex: 1; padding: 6px; border-radius: 6px; border: 1px solid var(--divider-color);
+            background: var(--card-background-color); color: var(--primary-text-color);
+          }
         </style>
         <div class="kce-field">
           <label>Titel</label>
@@ -1785,8 +1805,9 @@
         </div>
         <div class="kce-field">
           <label>Pushbericht naar bij een verzoek</label>
-          ${notifyCheckboxesHtml}
-          <div class="kce-hint">Alle aangevinkte telefoons krijgen een bericht zodra een kind credits of een beloning aanvraagt.</div>
+          ${notifyRowsHtml}
+          ${notifyAddHtml}
+          <div class="kce-hint">Alle toegevoegde telefoons krijgen een bericht zodra een kind credits of een beloning aanvraagt.</div>
         </div>
 
         <div class="kce-section">
@@ -1830,12 +1851,21 @@
         });
       });
 
-      this.shadowRoot.querySelectorAll("input[data-notify]").forEach((el) => {
-        el.addEventListener("change", () => {
-          const checked = Array.from(this.shadowRoot.querySelectorAll("input[data-notify]:checked")).map((c) => c.dataset.notify);
-          this._update({ notify_services: checked });
+      this.shadowRoot.querySelectorAll("[data-remove-notify]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const id = btn.dataset.removeNotify;
+          this._update({ notify_services: selectedNotifyList.filter((x) => x !== id) });
         });
       });
+
+      const notifyAddBtn = this.shadowRoot.querySelector("#kce-notify-add-btn");
+      if (notifyAddBtn) {
+        notifyAddBtn.addEventListener("click", () => {
+          const select = this.shadowRoot.querySelector("#kce-notify-select");
+          if (!select || !select.value) return;
+          this._update({ notify_services: [...selectedNotifyList, select.value] });
+        });
+      }
     }
   }
 

@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.3
+
+- **Kids-card editor's notify-device picker replaced with an add/remove
+  list** instead of a checkbox for every single `notify.*` service found -
+  a dropdown of not-yet-added devices plus a "+ Toevoegen" button, each
+  added device shown as its own removable row. Much less cluttered when
+  there are several notify services to choose from.
+- **The kid's name on the kids card is noticeably bigger** (1.2em -> 2em).
+
 ## 0.1.2
 
 - **The "wat heb je gedaan" / confirm popups are no longer literally
