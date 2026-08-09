@@ -80,8 +80,11 @@
   }
 
   // Every push notification this integration sends should open straight to
-  // the credits dashboard, not just the HA app's default landing page.
-  const DASHBOARD_URL = "https://home.jonishome.nl/sub-dash/credits-card";
+  // the credits dashboard, not just the HA app's default landing page. A
+  // relative path (not the full https://... URL) is what the Companion App
+  // actually navigates to in-app - a full external URL gets treated as an
+  // outside link instead.
+  const DASHBOARD_URL = "/sub-dash/credits-card";
 
   async function notifyAll(hass, notifyServiceIds, title, message) {
     if (!notifyServiceIds || !notifyServiceIds.length) return;

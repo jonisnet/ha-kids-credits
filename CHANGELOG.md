@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.0.10
+
+- **Fixed the notification deep link opening the app's home page instead
+  of the credits dashboard.** The `clickAction` was set to a full
+  `https://...` URL, which the Companion App treats as an external link
+  rather than an in-app route. It's now a plain relative path
+  (`/sub-dash/credits-card`), which is what the app actually matches
+  against its own dashboards.
+
 ## 0.0.9
 
 - **Fixed the task-request icon tiles becoming huge on a wide screen.**
