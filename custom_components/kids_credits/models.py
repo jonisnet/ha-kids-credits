@@ -71,17 +71,22 @@ STATUS_PENDING = "pending"
 STATUS_APPROVED = "approved"
 STATUS_REJECTED = "rejected"
 
+REQUEST_KIND_CREDIT = "credit"
+REQUEST_KIND_REWARD = "reward"
+
 
 @dataclass
 class CreditRequest:
     id: str
     kid_id: str
     reason: str
+    kind: str = REQUEST_KIND_CREDIT
     status: str = STATUS_PENDING
     created_at: float = field(default_factory=time.time)
     resolved_at: float | None = None
     actor: str | None = None
     amount: int | None = None
+    suggested_amount: int | None = None  # kid's own tap on a known task/reward button, not authoritative
 
     @classmethod
     def from_storage_dict(cls, raw: dict) -> "CreditRequest":
@@ -89,11 +94,13 @@ class CreditRequest:
             id=raw["id"],
             kid_id=raw["kid_id"],
             reason=raw.get("reason", ""),
+            kind=raw.get("kind", REQUEST_KIND_CREDIT),
             status=raw.get("status", STATUS_PENDING),
             created_at=float(raw.get("created_at", time.time())),
             resolved_at=float(raw["resolved_at"]) if raw.get("resolved_at") is not None else None,
             actor=raw.get("actor"),
             amount=raw.get("amount"),
+            suggested_amount=raw.get("suggested_amount"),
         )
 
     def to_storage_dict(self) -> dict:
@@ -101,11 +108,13 @@ class CreditRequest:
             "id": self.id,
             "kid_id": self.kid_id,
             "reason": self.reason,
+            "kind": self.kind,
             "status": self.status,
             "created_at": self.created_at,
             "resolved_at": self.resolved_at,
             "actor": self.actor,
             "amount": self.amount,
+            "suggested_amount": self.suggested_amount,
         }
 
 

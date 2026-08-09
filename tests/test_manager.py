@@ -201,6 +201,48 @@ async def test_approve_request_rejects_unknown_request_id(hass: HomeAssistant):
         await manager.async_approve_request("nonexistent", 3, "papa")
 
 
+async def test_request_reward_creates_a_pending_reward_request_without_changing_balance(hass: HomeAssistant):
+    manager = await _manager(hass)
+    await manager.async_award("limanah", 15, "opgespaard", None)
+
+    request = await manager.async_request_reward("limanah", "Robux", 15)
+
+    assert request.kind == "reward"
+    assert request.status == "pending"
+    assert request.suggested_amount == 15
+    assert manager.balance("limanah") == 15
+
+
+async def test_approving_a_reward_request_deducts_instead_of_awarding(hass: HomeAssistant):
+    manager = await _manager(hass)
+    await manager.async_award("limanah", 15, "opgespaard", None)
+    request = await manager.async_request_reward("limanah", "Robux", 15)
+
+    approved = await manager.async_approve_request(request.id, 15, "papa")
+
+    assert approved.status == "approved"
+    assert manager.balance("limanah") == 0
+    reward_entries = [e for e in manager.history("limanah") if e.category == "reward"]
+    assert len(reward_entries) == 1
+    assert reward_entries[0].delta == -15
+
+
+async def test_approving_a_reward_request_rejects_insufficient_balance(hass: HomeAssistant):
+    manager = await _manager(hass)
+    await manager.async_award("limanah", 5, "klusje", None)
+    request = await manager.async_request_reward("limanah", "Robux", 15)
+
+    with pytest.raises(ServiceValidationError):
+        await manager.async_approve_request(request.id, 15, "papa")
+    assert manager.balance("limanah") == 5
+
+
+async def test_request_reward_rejects_non_positive_amount(hass: HomeAssistant):
+    manager = await _manager(hass)
+    with pytest.raises(ServiceValidationError):
+        await manager.async_request_reward("limanah", "Robux", 0)
+
+
 async def test_requests_persist_across_reload(hass: HomeAssistant):
     manager = await _manager(hass)
     request = await manager.async_request_credit("limanah", "Kamer opgeruimd")
@@ -211,6 +253,30 @@ async def test_requests_persist_across_reload(hass: HomeAssistant):
     await reloaded.async_setup(["Limanah", "Aline"])
     assert len(reloaded.requests) == 2
     assert reloaded.balance("limanah") == 3
+
+
+async def test_clear_history_wipes_entries_and_resets_balance(hass: HomeAssistant):
+    manager = await _manager(hass)
+    await manager.async_award("limanah", 5, "a", None)
+    await manager.async_deduct("limanah", 1, "b", None)
+    await manager.async_award("aline", 3, "c", None)
+
+    await manager.async_clear_history("limanah")
+
+    assert manager.balance("limanah") == 0
+    assert manager.history("limanah") == []
+    assert manager.balance("aline") == 3  # other kid untouched
+
+
+async def test_clear_history_persists_across_reload(hass: HomeAssistant):
+    manager = await _manager(hass)
+    await manager.async_award("limanah", 5, "a", None)
+    await manager.async_clear_history("limanah")
+
+    reloaded = KidsCreditsManager(hass, "test_entry")
+    await reloaded.async_setup(["Limanah", "Aline"])
+    assert reloaded.balance("limanah") == 0
+    assert reloaded.history("limanah") == []
 
 
 async def test_award_and_deduct_persist_across_reload(hass: HomeAssistant):

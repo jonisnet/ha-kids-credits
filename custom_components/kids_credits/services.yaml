@@ -87,6 +87,48 @@ request_credit:
       required: true
       selector:
         text:
+    suggested_amount:
+      name: Voorgesteld aantal credits
+      description: Optioneel, bijvoorbeeld het aantal credits dat bij de aangetikte taak hoort. De ouder kan dit bij goedkeuren nog aanpassen.
+      required: false
+      selector:
+        number:
+          min: 1
+          max: 50
+          mode: box
+
+clear_history:
+  name: Geschiedenis wissen
+  description: Wist alle geschiedenis-items van een kind. Let op, dit zet het saldo ook terug naar 0 (het saldo is de optelsom van de geschiedenis).
+  fields:
+    kid_id:
+      name: Kind
+      required: true
+      selector:
+        text:
+
+request_reward:
+  name: Beloning aanvragen
+  description: Een kind vraagt om een beloning uit te keren nu er genoeg credits gespaard zijn. Wijzigt het saldo nog niet - wacht op goedkeuring.
+  fields:
+    kid_id:
+      name: Kind
+      required: true
+      selector:
+        text:
+    reason:
+      name: Welke beloning
+      required: true
+      selector:
+        text:
+    amount:
+      name: Credits die dit kost
+      required: true
+      selector:
+        number:
+          min: 1
+          max: 50
+          mode: box
 
 approve_request:
   name: Verzoek goedkeuren

@@ -16,6 +16,7 @@ from .const import (
     SIGNAL_UPDATED,
 )
 from .models import (
+    REQUEST_KIND_REWARD,
     STATUS_APPROVED,
     STATUS_PENDING,
     STATUS_REJECTED,
@@ -137,6 +138,16 @@ class KidsCreditsManager:
             raise ServiceValidationError("amount must be a positive number of credits")
         return await self.async_add_entry(kid_id, -amount, reason, "deduction", actor)
 
+    async def async_clear_history(self, kid_id: str) -> None:
+        """Wipes every ledger entry for this kid - since balance is purely the
+        sum of entries, this also resets their balance back to 0. There is no
+        way to clear the history log while keeping the balance; the editor's
+        confirm step must make that consequence clear before calling this."""
+        self.get_kid(kid_id)  # raises if unknown
+        self.entries = [e for e in self.entries if e.kid_id != kid_id]
+        await self._persist()
+        self._notify()
+
     async def async_set_photo(self, kid_id: str, photo: str | None) -> None:
         kid = self.get_kid(kid_id)
         if photo and len(photo) > MAX_PHOTO_DATA_URI_LENGTH:
@@ -155,11 +166,30 @@ class KidsCreditsManager:
             )
         return await self.async_add_entry(kid_id, -amount, reason, "reward", actor)
 
-    async def async_request_credit(self, kid_id: str, reason: str) -> CreditRequest:
+    async def async_request_credit(
+        self, kid_id: str, reason: str, suggested_amount: int | None = None
+    ) -> CreditRequest:
         """A kid asks for credit for a task they say they completed. Creates a
-        pending request only - no credits change hands until a parent approves it."""
+        pending request only - no credits change hands until a parent approves it.
+        `suggested_amount` (e.g. from tapping a known task button) is only ever a
+        pre-fill hint for the parent's approval amount, never authoritative."""
         self.get_kid(kid_id)  # raises if unknown
-        request = CreditRequest(id=new_entry_id(), kid_id=kid_id, reason=reason)
+        request = CreditRequest(id=new_entry_id(), kid_id=kid_id, reason=reason, suggested_amount=suggested_amount)
+        self.requests.append(request)
+        await self._persist()
+        self._notify()
+        return request
+
+    async def async_request_reward(self, kid_id: str, reason: str, amount: int) -> CreditRequest:
+        """A kid asks to redeem a reward they've saved up enough credits for.
+        Creates a pending request only - a parent must still approve it before
+        any credits are actually deducted."""
+        self.get_kid(kid_id)  # raises if unknown
+        if amount <= 0:
+            raise ServiceValidationError("amount must be a positive number of credits")
+        request = CreditRequest(
+            id=new_entry_id(), kid_id=kid_id, reason=reason, kind=REQUEST_KIND_REWARD, suggested_amount=amount
+        )
         self.requests.append(request)
         await self._persist()
         self._notify()
@@ -172,10 +202,21 @@ class KidsCreditsManager:
         if request.status != STATUS_PENDING:
             raise ServiceValidationError(f"Verzoek is al {request.status}")
         self.get_kid(request.kid_id)  # raises if unknown
+
+        if request.kind == REQUEST_KIND_REWARD:
+            if self.balance(request.kid_id) < amount:
+                kid = self.get_kid(request.kid_id)
+                raise ServiceValidationError(
+                    f"{kid.name} heeft maar {self.balance(request.kid_id)} credits, {amount} nodig voor deze beloning"
+                )
+            delta, category = -amount, "reward"
+        else:
+            delta, category = amount, "task"
+
         self.entries.append(
             LedgerEntry(
-                id=new_entry_id(), kid_id=request.kid_id, delta=amount, reason=request.reason,
-                category="task", actor=actor,
+                id=new_entry_id(), kid_id=request.kid_id, delta=delta, reason=request.reason,
+                category=category, actor=actor,
             )
         )
         request.status = STATUS_APPROVED

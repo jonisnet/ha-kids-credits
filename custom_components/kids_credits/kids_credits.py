@@ -1,13 +1,23 @@
-"""Sensor platform: one credit-balance sensor per kid."""
+"""The 'kids_credits' platform of the kids_credits integration.
+
+This looks circular, but it's the standard way for an integration to have
+entities directly under its own domain (kids_credits.<kid_id> instead of
+sensor.<kid_id>) - matching a platform-name-equals-component-name lookup.
+Loaded via EntityComponent.async_setup_entry() in __init__.py, NOT via
+hass.config_entries.async_forward_entry_setups() - that call would treat
+"forward to a platform whose domain equals the integration's own domain" as
+re-entering the entry's own setup and reject it. Either way, this module
+receives a real, config-entry-bound async_add_entities callback, so the
+resulting entities are correctly tied to the config entry.
+"""
 from __future__ import annotations
 
 import logging
 
-from homeassistant.components.sensor import SensorEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
+from homeassistant.helpers.entity import Entity
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import CONF_REWARD_THRESHOLD, DEFAULT_REWARD_THRESHOLD, DOMAIN, SIGNAL_UPDATED
@@ -21,7 +31,7 @@ async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
     manager: KidsCreditsManager = hass.data[DOMAIN][entry.entry_id]
-    entities = [KidsCreditsSensor(manager, entry, kid) for kid in manager.kids.values()]
+    entities = [KidsCreditsEntity(manager, entry, kid) for kid in manager.kids.values()]
     async_add_entities(entities)
 
     known_kid_ids = {kid.id for kid in manager.kids.values()}
@@ -29,7 +39,7 @@ async def async_setup_entry(
     @callback
     def _async_add_new_kids() -> None:
         new_entities = [
-            KidsCreditsSensor(manager, entry, kid)
+            KidsCreditsEntity(manager, entry, kid)
             for kid in manager.kids.values()
             if kid.id not in known_kid_ids
         ]
@@ -42,26 +52,26 @@ async def async_setup_entry(
     )
 
 
-class KidsCreditsSensor(SensorEntity):
-    """The current credit balance for one kid."""
+class KidsCreditsEntity(Entity):
+    """The current credit balance for one kid, as a kids_credits.<kid_id> entity.
 
-    _attr_should_poll = False
-    _attr_native_unit_of_measurement = "credits"
-    _attr_state_class = None
+    No device_info here (deliberately, matching the same fix life_events
+    needed): "legacy naming" (has_entity_name False) entities linked to a
+    device get "<device name> <entity name>" computed as their friendly_name
+    regardless of has_entity_name, which would mangle every kid's name.
+    Being tied to the config entry (via EntityComponent in __init__.py) is
+    what makes entities show up under Settings -> Devices & services ->
+    Kids Credits; that doesn't require a device.
+    """
+
+    should_poll = False
+    _attr_has_entity_name = False
 
     def __init__(self, manager: KidsCreditsManager, entry: ConfigEntry, kid: Kid) -> None:
         self._manager = manager
         self._entry = entry
         self._kid = kid
-        self._attr_unique_id = f"{entry.entry_id}_{kid.id}"
-        self._attr_name = kid.name
-        self._attr_icon = kid.icon
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, f"{entry.entry_id}_{kid.id}")},
-            name=kid.name,
-            manufacturer="Kids Credits",
-            model="Beloningssysteem",
-        )
+        self.entity_id = f"{DOMAIN}.{kid.id}"
 
     async def async_added_to_hass(self) -> None:
         self.async_on_remove(
@@ -76,13 +86,27 @@ class KidsCreditsSensor(SensorEntity):
         if kid is None:
             return  # kid was removed from the config; entity lingers until HA restarts
         self._kid = kid
-        self._attr_name = kid.name
-        self._attr_icon = kid.icon
         self.async_write_ha_state()
 
     @property
-    def native_value(self) -> int:
+    def unique_id(self) -> str:
+        return f"{self._entry.entry_id}_{self._kid.id}"
+
+    @property
+    def name(self) -> str | None:
+        return self._kid.name
+
+    @property
+    def icon(self) -> str | None:
+        return self._kid.icon
+
+    @property
+    def state(self) -> int:
         return self._manager.balance(self._kid.id)
+
+    @property
+    def unit_of_measurement(self) -> str | None:
+        return "credits"
 
     @property
     def extra_state_attributes(self) -> dict:
@@ -109,12 +133,14 @@ class KidsCreditsSensor(SensorEntity):
             "requests": [
                 {
                     "id": r.id,
+                    "kind": r.kind,
                     "reason": r.reason,
                     "status": r.status,
                     "created_at": r.created_at,
                     "resolved_at": r.resolved_at,
                     "actor": r.actor,
                     "amount": r.amount,
+                    "suggested_amount": r.suggested_amount,
                 }
                 for r in self._manager.requests_for(self._kid.id)
             ],

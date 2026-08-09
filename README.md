@@ -14,10 +14,12 @@ works if you prefer it.
   kids and 2 parents you place 4 card instances, one per (kid, parent) pair.
   Put each parent's cards only on a dashboard/view that parent actually
   opens.
-- `kids-credits-kids-card` — read-only balance + progress bar, no service
-  calls at all. Its `kids` config picks which kid(s) show on it (leave empty
-  for "all"), so you can show both kids together or give each their own
-  card. Meant for a shared kids tablet.
+- `kids-credits-kids-card` — read-only balance + progress bar; the only
+  thing it can do beyond displaying is let a kid *submit a request* (for
+  credit or a reward), which never changes a balance by itself and always
+  needs a parent's approval on their own card. Its `kids` config picks which
+  kid(s) show on it (leave empty for "all"), so you can show both kids
+  together or give each their own card. Meant for a shared kids tablet.
 
 There is no login/permission system inside the integration itself — "only
 parents can change credits" is enforced simply by which dashboard/device a
@@ -52,7 +54,9 @@ Both are editable later via the integration's **Configure** button. Renaming
 a kid in that field creates a *new* kid with fresh history — it does not
 rename the existing one in place.
 
-Each kid gets one `sensor.<name>` entity: its state is the current balance,
+Each kid gets one `kids_credits.<name>` entity (its own domain, not
+`sensor.*`, so it's easy to pick out from the rest of your entities): its
+state is the current balance,
 with attributes `photo`, `reward_threshold`, `credits_until_reward`,
 `reward_available`, `lifetime_earned`, `lifetime_deducted`, and a `history`
 list of the most recent ledger entries (reason, delta, timestamp, actor).
@@ -98,14 +102,23 @@ populated from your existing `notify.*` services. When set, redeeming any
 reward on that card also sends a notification (title "Kids Credits", message
 naming the kid and the reward) through that service.
 
-### Kid photo
+### Kid photo and clearing history — editor only
 
-Tap the small 📷 badge on a kid's avatar (parent card only) to upload a
-photo from that device. It's stored centrally (via
-`kids_credits.set_kid_photo`, capped at roughly 300 kB) so every card
-showing that kid — including the read-only kids card — picks it up
-immediately. Leaving a kid without a photo just shows their configured mdi
-icon instead.
+Both live only in the parent card's visual editor, never on the live
+dashboard card itself, so a kid tapping around the actual card can't
+accidentally trigger or change either one:
+
+- **Foto van dit kind** — upload a photo from that device. It's automatically
+  center-cropped to a square and downscaled to a small JPEG in the browser
+  before upload (so even a multi-MB phone photo ends up as a few KB), then
+  stored centrally (via `kids_credits.set_kid_photo`) so every card showing
+  that kid — including the read-only kids card — picks it up immediately.
+  Leaving a kid without a photo just shows their configured mdi icon instead.
+  A "Foto verwijderen" button appears once a photo is set.
+- **Geschiedenis wissen** — wipes that kid's ledger. Since the balance is
+  just the sum of the ledger, this also resets it to 0; there's no way to
+  clear the log while keeping the balance. Tap-twice-to-confirm (the button
+  arms itself for 4 seconds after the first tap), no native browser popup.
 
 ### History popup
 
@@ -114,22 +127,41 @@ ledger entry for that kid: the task/reason, the amount, when it happened,
 and who awarded it. On the kids card this is read-only, same as the rest of
 that card.
 
-### Kids requesting credit themselves
+### Kids requesting credit or a reward themselves
 
 The kids card has a "✋ Ik heb een klus gedaan!" button per kid. Tapping it
-opens a popup where the kid describes what they did; submitting it creates
-a *pending* request — this is the one thing the kids card can do that isn't
-purely read-only, but it never changes a balance by itself.
+opens a popup of **task buttons** (not a text box — a kid who can't read or
+write well yet can still tap the task they did) drawn from the kids card's
+own `groups` config (same shape and same editor UI as the parent card's task
+groups, but edited independently — leave it unset to fall back to the same
+default catalog). A "Iets anders" text field at the bottom covers anything
+not in the list. Submitting either way creates a *pending* request — this
+is the one balance-adjacent thing the kids card can do, but it never changes
+a balance by itself.
+
+Once a kid has saved up enough, a "🎁 Beloning aanvragen" button appears on
+their tile too — same idea, but approving it *deducts* credits instead of
+awarding them.
 
 Every parent card shows a "📥 Verzoeken" chip with the number of pending
-requests for that kid. Opening it lists each one with an amount field and
-**Goedkeuren**/**Afwijzen** buttons — approving awards the credits (logged
-with that parent as the actor, same as any other award), rejecting leaves
-the balance untouched. Only a parent card can resolve a request.
+requests for that kid. Opening it lists each one (prefixed ✋ for a credit
+request, 🎁 for a reward request) with an amount field — pre-filled with
+whatever the kid's tap suggested, editable before confirming — and
+**Goedkeuren**/**Afwijzen** buttons. Approving a credit request awards
+credits; approving a reward request deducts them (rejecting either leaves
+the balance untouched). Only a parent card can resolve a request.
 
 The kids card also has a "N verzoeken" link per kid opening a read-only
 overview of all their requests (pending/goedgekeurd/afgewezen), so a kid can
 check on something they asked for without waiting on a parent.
+
+### Push notification when a kid submits a request
+
+The kids card's editor has a **"Pushbericht naar bij een verzoek"**
+checklist, populated from your existing `notify.*` services — tick every
+phone that should be pinged. The moment a kid submits a credit or reward
+request, all of them get a notification naming the kid and what they're
+asking for, so a parent doesn't need the dashboard open to notice.
 
 ## Services
 
@@ -139,13 +171,19 @@ check on something they asked for without waiting on a parent.
   balance is below `amount`
 - `kids_credits.set_kid_photo` (`kid_id`, optional `photo` as a `data:` URI —
   omit/empty to clear it back to the mdi icon)
-- `kids_credits.request_credit` (`kid_id`, `reason`) — creates a pending
-  request, does not change the balance
+- `kids_credits.clear_history` (`kid_id`) — wipes the ledger, resets balance
+  to 0
+- `kids_credits.request_credit` (`kid_id`, `reason`, optional
+  `suggested_amount`) — creates a pending request, does not change the
+  balance
+- `kids_credits.request_reward` (`kid_id`, `reason`, `amount`) — same, for a
+  reward instead of a task
 - `kids_credits.approve_request` (`request_id`, `amount`, optional `actor`) —
-  awards the credits and marks the request approved
+  awards credits for a credit request, or deducts them for a reward request;
+  marks the request approved
 - `kids_credits.reject_request` (`request_id`, optional `actor`) — marks the
   request rejected, no balance change
 
-`kid_id` is the slugified name shown in each sensor's `kid_id` attribute
+`kid_id` is the slugified name shown in each entity's `kid_id` attribute
 (e.g. `limanah`). These are what the cards call under the hood; you can also
 call them directly from automations/scripts.

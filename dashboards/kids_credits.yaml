@@ -9,7 +9,7 @@
 # never shown on the kids' dashboard.
 #
 # Replace `limanah` / `aline` below with the kid_id shown in each kid's
-# sensor.<naam> entity (Settings -> Devices & services -> Kids Credits).
+# kids_credits.<naam> entity (Settings -> Devices & services -> Kids Credits).
 
 title: Kids Credits
 views:
@@ -46,3 +46,4 @@ views:
       - type: custom:kids-credits-kids-card
         title: Onze credits
         # kids: [limanah, aline]   # leeg/weggelaten = toon alle kinderen
+        # notify_services: [notify.mobile_app_iphone_papa, notify.mobile_app_iphone_mama]

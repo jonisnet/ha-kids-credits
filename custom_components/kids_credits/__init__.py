@@ -12,8 +12,8 @@ import logging
 from pathlib import Path
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.entity_component import EntityComponent
 from homeassistant.loader import async_get_integration
 
 from .const import CONF_KIDS, DEFAULT_KID_NAMES, DOMAIN
@@ -21,8 +21,6 @@ from .manager import KidsCreditsManager
 from .services import async_register_services, async_unregister_services
 
 _LOGGER = logging.getLogger(__name__)
-
-PLATFORMS = [Platform.SENSOR]
 
 FRONTEND_URL_BASE = "/kids_credits_static"
 CARD_FILENAME = "kids-credits-cards.js"
@@ -41,14 +39,28 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     async_register_services(hass)
     await _async_register_frontend(hass)
 
-    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    # Entities live directly in the kids_credits domain (kids_credits.*
+    # entity_ids, not sensor.*). That can't go through
+    # hass.config_entries.async_forward_entry_setups(entry, [DOMAIN]):
+    # ConfigEntry.async_setup() treats "forward to a platform whose domain
+    # equals the integration's own domain" as re-entering this very entry's
+    # setup and raises OperationNotAllowed. EntityComponent.async_setup_entry()
+    # is the mechanism HA itself uses for entities that live under their own
+    # integration's domain - it builds the config-entry-bound EntityPlatform
+    # and loads our kids_credits.py platform module directly, without going
+    # through that reentrancy-guarded path. (Same pattern already proven in
+    # the ha-life-events integration.)
+    component = EntityComponent(_LOGGER, DOMAIN, hass)
+    hass.data[f"{DOMAIN}_component"] = component
+    if not await component.async_setup_entry(entry):
+        return False
 
     return True
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
-    if not unload_ok:
+    component: EntityComponent = hass.data.pop(f"{DOMAIN}_component")
+    if not await component.async_unload_entry(entry):
         return False
 
     manager: KidsCreditsManager = hass.data[DOMAIN].pop(entry.entry_id)

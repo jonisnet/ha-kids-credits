@@ -48,7 +48,7 @@
     return Object.values(hass.states)
       .filter(
         (st) =>
-          st.entity_id.startsWith("sensor.") &&
+          st.entity_id.startsWith(`${DOMAIN}.`) &&
           st.attributes &&
           "kid_id" in st.attributes &&
           "reward_threshold" in st.attributes
@@ -64,6 +64,18 @@
     return Object.keys((hass && hass.services && hass.services.notify) || {}).sort();
   }
 
+  async function notifyAll(hass, notifyServiceIds, title, message) {
+    if (!notifyServiceIds || !notifyServiceIds.length) return;
+    for (const fullServiceId of notifyServiceIds) {
+      const [notifyDomain, notifyService] = fullServiceId.split(".");
+      try {
+        await hass.callService(notifyDomain, notifyService, { title, message });
+      } catch (err) {
+        console.warn("Kids Credits: notify service call failed", fullServiceId, err);
+      }
+    }
+  }
+
   function formatWhen(unixSeconds) {
     if (!unixSeconds) return "";
     const d = new Date(unixSeconds * 1000);
@@ -72,6 +84,70 @@
       " " +
       d.toLocaleTimeString("nl-NL", { hour: "2-digit", minute: "2-digit" })
     );
+  }
+
+  // Phone-camera photos are commonly several MB - never upload the raw
+  // file. Center-crops to a square (matches the circular avatar) and
+  // downsizes to a small JPEG, so the resulting data: URI is reliably well
+  // under the backend's MAX_PHOTO_DATA_URI_LENGTH regardless of the
+  // original photo's resolution.
+  function processPhotoFile(file, targetSize = 240, quality = 0.85) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onerror = () => reject(new Error("kon het bestand niet lezen"));
+      reader.onload = () => {
+        const img = new Image();
+        img.onerror = () => reject(new Error("kon de afbeelding niet laden"));
+        img.onload = () => {
+          const side = Math.min(img.naturalWidth, img.naturalHeight);
+          const sx = (img.naturalWidth - side) / 2;
+          const sy = (img.naturalHeight - side) / 2;
+          const canvas = document.createElement("canvas");
+          canvas.width = targetSize;
+          canvas.height = targetSize;
+          const ctx = canvas.getContext("2d");
+          ctx.drawImage(img, sx, sy, side, side, 0, 0, targetSize, targetSize);
+          resolve(canvas.toDataURL("image/jpeg", quality));
+        };
+        img.src = reader.result;
+      };
+      reader.readAsDataURL(file);
+    });
+  }
+
+  // Photo upload lives only in the card editor (Settings-gated), never on
+  // the live dashboard card - a kid tapping around the actual card can't
+  // accidentally trigger or change it. Resolves true if a photo was saved.
+  function promptPhotoUpload(hass, kidId) {
+    return new Promise((resolve) => {
+      const input = document.createElement("input");
+      input.type = "file";
+      input.accept = "image/*";
+      input.addEventListener("change", async () => {
+        const file = input.files && input.files[0];
+        if (!file) {
+          resolve(false);
+          return;
+        }
+        let photo;
+        try {
+          photo = await processPhotoFile(file);
+        } catch (err) {
+          alert("Foto verwerken is niet gelukt: " + err.message);
+          resolve(false);
+          return;
+        }
+        if (photo.length > 380000) {
+          // Should be unreachable at 240x240 JPEG - a safety net, not the primary check.
+          alert("Deze foto kon niet klein genoeg gemaakt worden, probeer een andere.");
+          resolve(false);
+          return;
+        }
+        await callService(hass, "set_kid_photo", { kid_id: kidId, photo });
+        resolve(true);
+      });
+      input.click();
+    });
   }
 
   function renderAvatar(st, cssClass) {
@@ -107,6 +183,8 @@
     }
     .kc-approve-btn { background: var(--success-color, #43a047); color: #fff; }
     .kc-reject-btn { background: var(--secondary-background-color); color: var(--primary-text-color); }
+    .kc-request-group-label { font-size: 0.8em; font-weight: 700; color: var(--secondary-text-color); margin: 12px 0 2px; text-transform: uppercase; letter-spacing: 0.02em; }
+    .kc-request-group-label:first-child { margin-top: 0; }
     .kc-request-form textarea {
       width: 100%; min-height: 70px; padding: 8px; border-radius: 8px; border: 1px solid var(--divider-color);
       background: var(--card-background-color); color: var(--primary-text-color); font-family: inherit; resize: vertical;
@@ -341,26 +419,13 @@
       else await this._deduct(kidId, amount, reason);
       amountInput.value = "";
       reasonInput.value = "";
-    }
-
-    async _uploadPhoto(kidId) {
-      const input = document.createElement("input");
-      input.type = "file";
-      input.accept = "image/*";
-      input.addEventListener("change", () => {
-        const file = input.files && input.files[0];
-        if (!file) return;
-        if (file.size > 300000) {
-          alert("Foto is te groot, kies een kleinere afbeelding (max ~300kB).");
-          return;
-        }
-        const reader = new FileReader();
-        reader.onload = async () => {
-          await callService(this._hass, "set_kid_photo", { kid_id: kidId, photo: reader.result });
-        };
-        reader.readAsDataURL(file);
-      });
-      input.click();
+      // Without this, the input that was just typed into keeps DOM focus,
+      // and _safeRerender()'s "don't wipe in-progress typing" guard then
+      // also blocks the re-render that should show OUR OWN successful
+      // award/deduct - the card looks frozen until focus moves elsewhere.
+      amountInput.blur();
+      reasonInput.blur();
+      this._safeRerender();
     }
 
     _openGroupModal(kidId, group) {
@@ -491,10 +556,16 @@
             .map(
               (r) => css`
                 <div class="kc-request-row">
-                  <div class="kc-request-reason">${escapeAttr(r.reason)}</div>
+                  <div class="kc-request-reason">${r.kind === "reward" ? "🎁" : "✋"} ${escapeAttr(r.reason)}</div>
                   <div class="kc-request-meta">${formatWhen(r.created_at)}</div>
                   <div class="kc-request-actions">
-                    <input type="number" min="1" placeholder="credits" id="kc-req-amount-${escapeAttr(r.id)}" />
+                    <input
+                      type="number"
+                      min="1"
+                      placeholder="credits"
+                      id="kc-req-amount-${escapeAttr(r.id)}"
+                      ${r.suggested_amount ? `value="${r.suggested_amount}"` : ""}
+                    />
                     <button class="kc-approve-btn" data-action="approve-request" data-request="${escapeAttr(r.id)}">Goedkeuren</button>
                     <button class="kc-reject-btn" data-action="reject-request" data-request="${escapeAttr(r.id)}">Afwijzen</button>
                   </div>
@@ -585,11 +656,6 @@
           .kc-avatar-wrap { position: relative; flex-shrink: 0; }
           .kc-avatar { width: 48px; height: 48px; border-radius: 50%; object-fit: cover; --mdc-icon-size: 48px; color: var(--primary-color); cursor: pointer; }
           img.kc-avatar { background: var(--secondary-background-color); }
-          .kc-photo-btn {
-            position: absolute; bottom: -2px; right: -2px; width: 20px; height: 20px; border-radius: 50%;
-            background: var(--primary-color); color: var(--text-primary-color, #fff); border: 2px solid var(--card-background-color);
-            font-size: 0.7em; line-height: 1; cursor: pointer; display: flex; align-items: center; justify-content: center;
-          }
           .kc-name-actor { flex: 1; min-width: 0; }
           .kc-name { font-size: 1.15em; font-weight: 700; cursor: pointer; }
           .kc-name:hover { text-decoration: underline; }
@@ -642,7 +708,6 @@
             <div class="kc-header">
               <div class="kc-avatar-wrap">
                 ${renderAvatar(st, "kc-avatar")}
-                <button class="kc-photo-btn" data-action="upload-photo" title="Foto wijzigen">📷</button>
               </div>
               <div class="kc-name-actor">
                 <div class="kc-name" data-action="open-history">${escapeAttr(name)}</div>
@@ -688,8 +753,6 @@
             this._openRewardsModal(kidId, getKidEntity(this._hass, kidId) || st);
           } else if (action === "open-history") {
             this._openHistoryModal(getKidEntity(this._hass, kidId) || st);
-          } else if (action === "upload-photo") {
-            this._uploadPhoto(kidId);
           } else if (action === "manual-plus") {
             await this._manual(kidId, 1);
           } else if (action === "manual-minus") {
@@ -766,20 +829,66 @@
       showModal(this.shadowRoot, `Geschiedenis van ${escapeAttr(st.attributes.friendly_name || "")}`, body);
     }
 
+    async _notifyParentsOfRequest(kidId, message) {
+      const kidName = (getKidEntity(this._hass, kidId) || {}).attributes?.friendly_name || kidId;
+      await notifyAll(this._hass, this._config.notify_services, "Kids Credits", `${kidName}: ${message}`);
+    }
+
     _openRequestFormModal(kidId) {
+      // Task buttons, not a text box: a 6-year-old who can't read/write
+      // well yet can still tap a picture of the task they did. Falls back
+      // to a free-text option at the bottom for anything not in the list.
+      const groups = configGroups(this._config);
+      const groupsHtml = groups
+        .map(
+          (group) => css`
+            <div class="kc-request-group-label">${escapeAttr(group.label)}</div>
+            ${group.tasks
+              .map(
+                (task) => css`
+                  <button
+                    class="kc-modal-list-btn"
+                    data-action="submit-task-request"
+                    data-amount="${group.points}"
+                    data-reason="${escapeAttr(task)}"
+                  >
+                    <span class="kc-modal-list-amount">+${group.points}</span>
+                    <span>${escapeAttr(task)}</span>
+                  </button>
+                `
+              )
+              .join("")}
+          `
+        )
+        .join("");
+
       const body = css`
+        ${groupsHtml}
         <div class="kc-request-form">
-          <textarea id="kc-request-reason" placeholder="Bijvoorbeeld: mijn kamer opgeruimd en gestofzuigd"></textarea>
-          <button class="kc-request-submit" data-action="submit-request">Verzoek versturen</button>
+          <div class="kc-request-group-label">Iets anders</div>
+          <textarea id="kc-request-reason" placeholder="Typ hier wat je hebt gedaan"></textarea>
+          <button class="kc-request-submit" data-action="submit-text-request">Verzoek versturen</button>
         </div>
       `;
       const modal = showModal(this.shadowRoot, "Credits aanvragen", body);
-      modal.querySelector('[data-action="submit-request"]').addEventListener("click", async () => {
+      modal.querySelectorAll('[data-action="submit-task-request"]').forEach((btn) => {
+        btn.addEventListener("click", async () => {
+          await callService(this._hass, "request_credit", {
+            kid_id: kidId,
+            reason: btn.dataset.reason,
+            suggested_amount: parseInt(btn.dataset.amount, 10),
+          });
+          hideModal(this.shadowRoot);
+          await this._notifyParentsOfRequest(kidId, `vraagt credits aan voor "${btn.dataset.reason}"`);
+        });
+      });
+      modal.querySelector('[data-action="submit-text-request"]').addEventListener("click", async () => {
         const textarea = modal.querySelector("#kc-request-reason");
         const reason = textarea.value.trim();
         if (!reason) return;
         await callService(this._hass, "request_credit", { kid_id: kidId, reason });
         hideModal(this.shadowRoot);
+        await this._notifyParentsOfRequest(kidId, `vraagt credits aan voor "${reason}"`);
       });
     }
 
@@ -791,12 +900,12 @@
               (r) => css`
                 <div class="kc-request-row">
                   <div class="kc-request-top">
-                    <span class="kc-request-reason">${escapeAttr(r.reason)}</span>
+                    <span class="kc-request-reason">${r.kind === "reward" ? "🎁" : "✋"} ${escapeAttr(r.reason)}</span>
                     ${statusBadge(r.status)}
                   </div>
                   <div class="kc-request-meta">
                     ${formatWhen(r.created_at)}
-                    ${r.status !== "pending" ? ` · ${r.status === "approved" ? "+" + r.amount + " credits" : ""}` : ""}
+                    ${r.status === "approved" ? ` · ${r.kind === "reward" ? "-" : "+"}${r.amount} credits` : ""}
                     ${r.actor ? ` · door ${escapeAttr(r.actor)}` : ""}
                   </div>
                 </div>
@@ -850,6 +959,13 @@
             display: block; width: 100%; margin-top: 12px; border: none; border-radius: 16px; padding: 8px 12px;
             background: var(--primary-color); color: var(--text-primary-color, #fff); font-weight: 600; cursor: pointer;
           }
+          .kc-reward-request-btn {
+            display: block; width: 100%; margin-top: 10px; border: none; border-radius: 16px; padding: 8px 12px;
+            background: var(--success-color, #43a047); color: #fff; font-weight: 700; cursor: pointer;
+          }
+          .kc-reward-pending {
+            margin-top: 10px; font-size: 0.8em; font-weight: 600; color: var(--success-color, #43a047);
+          }
           .kc-requests-link {
             display: block; margin-top: 6px; font-size: 0.8em; color: var(--secondary-text-color);
             background: none; border: none; cursor: pointer; text-decoration: underline; padding: 0;
@@ -872,6 +988,14 @@
       this.shadowRoot.querySelectorAll("[data-action='request-credit']").forEach((el) => {
         el.addEventListener("click", () => this._openRequestFormModal(el.dataset.kid));
       });
+      this.shadowRoot.querySelectorAll("[data-action='request-reward']").forEach((el) => {
+        el.addEventListener("click", async () => {
+          const amount = parseInt(el.dataset.amount, 10);
+          const reason = `Beloning bij ${amount} credits`;
+          await callService(this._hass, "request_reward", { kid_id: el.dataset.kid, reason, amount });
+          await this._notifyParentsOfRequest(el.dataset.kid, `vraagt een beloning aan (${amount} credits)`);
+        });
+      });
       this.shadowRoot.querySelectorAll("[data-action='open-requests']").forEach((el) => {
         el.addEventListener("click", () => {
           const st = kids.find((k) => k.attributes.kid_id === el.dataset.kid);
@@ -889,6 +1013,17 @@
       const kidId = escapeAttr(st.attributes.kid_id);
       const requests = st.attributes.requests || [];
       const pendingCount = requests.filter((r) => r.status === "pending").length;
+      const hasPendingReward = requests.some((r) => r.kind === "reward" && r.status === "pending");
+
+      const rewardButtonHtml = ready
+        ? hasPendingReward
+          ? `<div class="kc-reward-pending">🎁 Beloning aangevraagd, wacht op goedkeuring</div>`
+          : css`
+              <button class="kc-reward-request-btn" data-action="request-reward" data-kid="${kidId}" data-amount="${threshold}">
+                🎁 Beloning aanvragen
+              </button>
+            `
+        : "";
 
       return css`
         <div class="kc-kid-tile">
@@ -897,6 +1032,7 @@
           <div class="kc-kid-balance">${balance}<span class="kc-kid-unit"> credits</span></div>
           <div class="kc-progress-wrap"><div class="kc-progress-bar" style="width:${pct}%"></div></div>
           <div class="kc-progress-label">${ready ? "Beloning verdiend! 🎉" : `nog ${threshold - balance} tot een beloning`}</div>
+          ${rewardButtonHtml}
           <button class="kc-request-btn" data-action="request-credit" data-kid="${kidId}">✋ Ik heb een klus gedaan!</button>
           <button class="kc-requests-link" data-action="open-requests" data-kid="${kidId}">
             ${requests.length ? `${requests.length} verzoek${requests.length === 1 ? "" : "en"}${pendingCount ? ` (${pendingCount} in afwachting)` : ""}` : "Nog geen verzoeken"}
@@ -923,6 +1059,7 @@
       display: flex; align-items: center; justify-content: space-between; padding: 10px 12px;
       background: var(--secondary-background-color); cursor: pointer; font-weight: 600;
     }
+    .kce-section-header-static { cursor: default; }
     .kce-section-header .kce-chevron { transition: transform 0.15s ease; }
     .kce-section-header.kce-collapsed .kce-chevron { transform: rotate(-90deg); }
     .kce-section-body { padding: 12px; display: flex; flex-direction: column; gap: 10px; }
@@ -948,10 +1085,127 @@
     .kce-reward-row { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; }
     .kce-reward-row input[type="text"] { flex: 1; padding: 6px 8px; border-radius: 6px; border: 1px solid var(--divider-color); background: var(--card-background-color); color: var(--primary-text-color); }
     .kce-reward-row input[type="number"] { width: 70px; padding: 6px 8px; border-radius: 6px; border: 1px solid var(--divider-color); background: var(--card-background-color); color: var(--primary-text-color); }
+    .kce-danger-btn {
+      border: 1px solid var(--error-color, #db4437); background: none; color: var(--error-color, #db4437);
+      border-radius: 6px; padding: 8px 12px; cursor: pointer; font-size: 0.9em; text-align: left;
+    }
+    .kce-photo-row { display: flex; align-items: center; gap: 10px; }
+    .kce-photo-preview { width: 44px; height: 44px; border-radius: 50%; object-fit: cover; --mdc-icon-size: 44px; color: var(--primary-color); }
+    img.kce-photo-preview { background: var(--secondary-background-color); }
   `;
 
   function fireConfigChanged(el, config) {
     el.dispatchEvent(new CustomEvent("config-changed", { detail: { config }, bubbles: true, composed: true }));
+  }
+
+  // Shared between KidsCreditsParentCardEditor and KidsCreditsKidsCardEditor
+  // (both a task catalog to award from and a task catalog to request from
+  // need the same "groups of tasks worth N credits" editing UI). Any editor
+  // using these must implement: self._config, self._expanded.groups (a
+  // plain object keyed by group index), self._updateGroups(groups), and
+  // self._render().
+  function groupsSectionHtml(config, expandedGroups) {
+    const groups = configGroups(config);
+    return groups
+      .map((group, idx) => {
+        const expanded = !!expandedGroups[idx];
+        const tasksHtml = group.tasks
+          .map(
+            (task, taskIdx) => css`
+              <div class="kce-task-row">
+                <input type="text" value="${escapeAttr(task)}" data-group="${idx}" data-task="${taskIdx}" data-field="task" />
+                <button class="kce-remove-btn" data-action="remove-task" data-group="${idx}" data-task="${taskIdx}">&times;</button>
+              </div>
+            `
+          )
+          .join("");
+        return css`
+          <div class="kce-group-box">
+            <div class="kce-section-header ${expanded ? "" : "kce-collapsed"}" data-action="toggle-group" data-group="${idx}">
+              <span>${escapeAttr(group.label)} (${group.tasks.length})</span>
+              <span class="kce-chevron">▾</span>
+            </div>
+            ${expanded
+              ? css`
+                  <div class="kce-group-row">
+                    <input type="number" min="0" value="${group.points}" data-group="${idx}" data-field="points" title="Credits" />
+                    <input type="text" value="${escapeAttr(group.label)}" data-group="${idx}" data-field="label" placeholder="Naam van de groep" />
+                  </div>
+                  ${tasksHtml}
+                  <button class="kce-add-btn" data-action="add-task" data-group="${idx}">+ Taak toevoegen</button>
+                  <br />
+                  <button class="kce-remove-group-btn" data-action="remove-group" data-group="${idx}">Groep verwijderen</button>
+                `
+              : ""}
+          </div>
+        `;
+      })
+      .join("");
+  }
+
+  function bindGroupsSection(root, self) {
+    root.querySelectorAll('[data-action="toggle-group"]').forEach((el) => {
+      el.addEventListener("click", () => {
+        const idx = el.dataset.group;
+        self._expanded.groups[idx] = !self._expanded.groups[idx];
+        self._render();
+      });
+    });
+
+    root.querySelectorAll('[data-field="points"], [data-field="label"]').forEach((el) => {
+      el.addEventListener("change", () => {
+        const groups = configGroups(self._config).map((g) => ({ ...g, tasks: [...g.tasks] }));
+        const idx = parseInt(el.dataset.group, 10);
+        if (el.dataset.field === "points") groups[idx].points = parseInt(el.value, 10) || 0;
+        else groups[idx].label = el.value;
+        self._updateGroups(groups);
+      });
+    });
+
+    root.querySelectorAll('[data-field="task"]').forEach((el) => {
+      el.addEventListener("change", () => {
+        const groups = configGroups(self._config).map((g) => ({ ...g, tasks: [...g.tasks] }));
+        groups[parseInt(el.dataset.group, 10)].tasks[parseInt(el.dataset.task, 10)] = el.value;
+        self._updateGroups(groups);
+      });
+    });
+
+    root.querySelectorAll('[data-action="add-task"]').forEach((el) => {
+      el.addEventListener("click", () => {
+        const groups = configGroups(self._config).map((g) => ({ ...g, tasks: [...g.tasks] }));
+        const idx = parseInt(el.dataset.group, 10);
+        groups[idx].tasks.push("Nieuwe taak");
+        self._expanded.groups[idx] = true;
+        self._updateGroups(groups);
+      });
+    });
+
+    root.querySelectorAll('[data-action="remove-task"]').forEach((el) => {
+      el.addEventListener("click", () => {
+        const groups = configGroups(self._config).map((g) => ({ ...g, tasks: [...g.tasks] }));
+        const gIdx = parseInt(el.dataset.group, 10);
+        groups[gIdx].tasks.splice(parseInt(el.dataset.task, 10), 1);
+        self._updateGroups(groups);
+      });
+    });
+
+    const addGroupBtn = root.querySelector('[data-action="add-group"]');
+    if (addGroupBtn) {
+      addGroupBtn.addEventListener("click", () => {
+        const groups = configGroups(self._config).map((g) => ({ ...g, tasks: [...g.tasks] }));
+        groups.push({ points: 1, label: "Nieuwe groep", tasks: [] });
+        self._expanded.groups[groups.length - 1] = true;
+        self._updateGroups(groups);
+      });
+    }
+
+    root.querySelectorAll('[data-action="remove-group"]').forEach((el) => {
+      el.addEventListener("click", () => {
+        const groups = configGroups(self._config).map((g) => ({ ...g, tasks: [...g.tasks] }));
+        groups.splice(parseInt(el.dataset.group, 10), 1);
+        self._updateGroups(groups);
+      });
+    });
   }
 
   // --------------------------------------------------------------------
@@ -963,6 +1217,7 @@
       this.attachShadow({ mode: "open" });
       this._config = {};
       this._expanded = { deductions: false, rewards: false, groups: {} };
+      this._clearHistoryArmed = false;
     }
 
     setConfig(config) {
@@ -1002,7 +1257,6 @@
       const config = this._config;
       const kids = getKidEntities(hass);
       const notifyServices = getNotifyServices(hass);
-      const groups = configGroups(config);
       const deductions = configDeductions(config);
       const rewards = config.rewards && config.rewards.length ? config.rewards : [];
 
@@ -1013,6 +1267,19 @@
         )
         .join("");
 
+      const selectedKid = kids.find((st) => st.attributes.kid_id === config.kid_id);
+      const photoPreviewHtml = selectedKid
+        ? css`
+            <div class="kce-photo-row">
+              ${renderAvatar(selectedKid, "kce-photo-preview")}
+              <button class="kce-add-btn" data-action="upload-photo">📷 Foto uploaden</button>
+              ${selectedKid.attributes.photo
+                ? `<button class="kce-remove-group-btn" data-action="remove-photo">Foto verwijderen</button>`
+                : ""}
+            </div>
+          `
+        : "";
+
       const notifyOptions =
         `<option value="">(geen)</option>` +
         notifyServices
@@ -1022,41 +1289,7 @@
           )
           .join("");
 
-      const groupsHtml = groups
-        .map((group, idx) => {
-          const expanded = !!this._expanded.groups[idx];
-          const tasksHtml = group.tasks
-            .map(
-              (task, taskIdx) => css`
-                <div class="kce-task-row">
-                  <input type="text" value="${escapeAttr(task)}" data-group="${idx}" data-task="${taskIdx}" data-field="task" />
-                  <button class="kce-remove-btn" data-action="remove-task" data-group="${idx}" data-task="${taskIdx}">&times;</button>
-                </div>
-              `
-            )
-            .join("");
-          return css`
-            <div class="kce-group-box">
-              <div class="kce-section-header ${expanded ? "" : "kce-collapsed"}" data-action="toggle-group" data-group="${idx}">
-                <span>${escapeAttr(group.label)} (${group.tasks.length})</span>
-                <span class="kce-chevron">▾</span>
-              </div>
-              ${expanded
-                ? css`
-                    <div class="kce-group-row">
-                      <input type="number" min="0" value="${group.points}" data-group="${idx}" data-field="points" title="Credits" />
-                      <input type="text" value="${escapeAttr(group.label)}" data-group="${idx}" data-field="label" placeholder="Naam van de groep" />
-                    </div>
-                    ${tasksHtml}
-                    <button class="kce-add-btn" data-action="add-task" data-group="${idx}">+ Taak toevoegen</button>
-                    <br />
-                    <button class="kce-remove-group-btn" data-action="remove-group" data-group="${idx}">Groep verwijderen</button>
-                  `
-                : ""}
-            </div>
-          `;
-        })
-        .join("");
+      const groupsHtml = groupsSectionHtml(config, this._expanded.groups);
 
       const deductionsHtml = deductions
         .map(
@@ -1092,6 +1325,16 @@
           <select id="kce-kid">${kidOptions || '<option value="">Geen kinderen gevonden</option>'}</select>
         </div>
         <div class="kce-field">
+          <label>Foto van dit kind</label>
+          ${photoPreviewHtml}
+        </div>
+        <div class="kce-field">
+          <label>Geschiedenis</label>
+          <button class="kce-danger-btn" data-action="clear-history">
+            ${this._clearHistoryArmed ? "Zeker weten? Nogmaals klikken wist alles en zet saldo op 0" : "🗑️ Geschiedenis wissen"}
+          </button>
+        </div>
+        <div class="kce-field">
           <label>Ouder (wie gebruikt deze kaart)</label>
           <input type="text" id="kce-actor" value="${escapeAttr(config.actor || "")}" placeholder="papa / mama" />
         </div>
@@ -1101,9 +1344,8 @@
         </div>
 
         <div class="kce-section">
-          <div class="kce-section-header" data-action="toggle-section" data-section="groups">
+          <div class="kce-section-header kce-section-header-static">
             <span>Taken per aantal credits</span>
-            <span class="kce-chevron">▾</span>
           </div>
           <div class="kce-section-body">
             ${groupsHtml}
@@ -1145,6 +1387,39 @@
       root.querySelector("#kce-actor").addEventListener("change", (e) => this._update({ actor: e.target.value }));
       root.querySelector("#kce-notify").addEventListener("change", (e) => this._update({ notify_service: e.target.value || undefined }));
 
+      const uploadPhotoBtn = root.querySelector('[data-action="upload-photo"]');
+      if (uploadPhotoBtn) {
+        uploadPhotoBtn.addEventListener("click", async () => {
+          if (this._config.kid_id) await promptPhotoUpload(this._hass, this._config.kid_id);
+        });
+      }
+      const removePhotoBtn = root.querySelector('[data-action="remove-photo"]');
+      if (removePhotoBtn) {
+        removePhotoBtn.addEventListener("click", async () => {
+          if (this._config.kid_id) await callService(this._hass, "set_kid_photo", { kid_id: this._config.kid_id, photo: "" });
+        });
+      }
+
+      const clearHistoryBtn = root.querySelector('[data-action="clear-history"]');
+      if (clearHistoryBtn) {
+        clearHistoryBtn.addEventListener("click", async () => {
+          if (!this._clearHistoryArmed) {
+            this._clearHistoryArmed = true;
+            this._render();
+            setTimeout(() => {
+              if (this._clearHistoryArmed) {
+                this._clearHistoryArmed = false;
+                this._render();
+              }
+            }, 4000);
+            return;
+          }
+          this._clearHistoryArmed = false;
+          if (this._config.kid_id) await callService(this._hass, "clear_history", { kid_id: this._config.kid_id });
+          this._render();
+        });
+      }
+
       root.querySelectorAll('[data-action="toggle-section"]').forEach((el) => {
         el.addEventListener("click", () => {
           const section = el.dataset.section;
@@ -1153,65 +1428,7 @@
         });
       });
 
-      root.querySelectorAll('[data-action="toggle-group"]').forEach((el) => {
-        el.addEventListener("click", () => {
-          const idx = el.dataset.group;
-          this._expanded.groups[idx] = !this._expanded.groups[idx];
-          this._render();
-        });
-      });
-
-      root.querySelectorAll('[data-field="points"], [data-field="label"]').forEach((el) => {
-        el.addEventListener("change", () => {
-          const groups = configGroups(this._config).map((g) => ({ ...g, tasks: [...g.tasks] }));
-          const idx = parseInt(el.dataset.group, 10);
-          if (el.dataset.field === "points") groups[idx].points = parseInt(el.value, 10) || 0;
-          else groups[idx].label = el.value;
-          this._updateGroups(groups);
-        });
-      });
-
-      root.querySelectorAll('[data-field="task"]').forEach((el) => {
-        el.addEventListener("change", () => {
-          const groups = configGroups(this._config).map((g) => ({ ...g, tasks: [...g.tasks] }));
-          groups[parseInt(el.dataset.group, 10)].tasks[parseInt(el.dataset.task, 10)] = el.value;
-          this._updateGroups(groups);
-        });
-      });
-
-      root.querySelectorAll('[data-action="add-task"]').forEach((el) => {
-        el.addEventListener("click", () => {
-          const groups = configGroups(this._config).map((g) => ({ ...g, tasks: [...g.tasks] }));
-          const idx = parseInt(el.dataset.group, 10);
-          groups[idx].tasks.push("Nieuwe taak");
-          this._expanded.groups[idx] = true;
-          this._updateGroups(groups);
-        });
-      });
-
-      root.querySelectorAll('[data-action="remove-task"]').forEach((el) => {
-        el.addEventListener("click", () => {
-          const groups = configGroups(this._config).map((g) => ({ ...g, tasks: [...g.tasks] }));
-          const gIdx = parseInt(el.dataset.group, 10);
-          groups[gIdx].tasks.splice(parseInt(el.dataset.task, 10), 1);
-          this._updateGroups(groups);
-        });
-      });
-
-      root.querySelector('[data-action="add-group"]').addEventListener("click", () => {
-        const groups = configGroups(this._config).map((g) => ({ ...g, tasks: [...g.tasks] }));
-        groups.push({ points: 1, label: "Nieuwe groep", tasks: [] });
-        this._expanded.groups[groups.length - 1] = true;
-        this._updateGroups(groups);
-      });
-
-      root.querySelectorAll('[data-action="remove-group"]').forEach((el) => {
-        el.addEventListener("click", () => {
-          const groups = configGroups(this._config).map((g) => ({ ...g, tasks: [...g.tasks] }));
-          groups.splice(parseInt(el.dataset.group, 10), 1);
-          this._updateGroups(groups);
-        });
-      });
+      bindGroupsSection(root, this);
 
       root.querySelectorAll('input[data-deduction]').forEach((el) => {
         el.addEventListener("change", () => {
@@ -1275,6 +1492,7 @@
       super();
       this.attachShadow({ mode: "open" });
       this._config = {};
+      this._expanded = { groups: {} };
     }
 
     setConfig(config) {
@@ -1304,12 +1522,19 @@
       this._render();
     }
 
+    _updateGroups(groups) {
+      this._update({ groups });
+    }
+
     _render() {
       if (!this.shadowRoot) return;
       const hass = this._hass;
       const config = this._config;
       const kids = getKidEntities(hass);
       const selected = new Set(config.kids || []);
+      const groupsHtml = groupsSectionHtml(config, this._expanded.groups);
+      const notifyServices = getNotifyServices(hass);
+      const selectedNotify = new Set(config.notify_services || []);
 
       const checkboxesHtml = kids.length
         ? kids
@@ -1323,6 +1548,20 @@
             )
             .join("")
         : `<div class="kce-empty">Geen kinderen gevonden - stel Kids Credits eerst in.</div>`;
+
+      const notifyCheckboxesHtml = notifyServices.length
+        ? notifyServices
+            .map((svc) => {
+              const fullId = `notify.${svc}`;
+              return css`
+                <label class="kce-checkbox-row">
+                  <input type="checkbox" data-notify="${escapeAttr(fullId)}" ${selectedNotify.has(fullId) ? "checked" : ""} />
+                  ${escapeAttr(fullId)}
+                </label>
+              `;
+            })
+            .join("")
+        : `<div class="kce-empty">Geen notify-services gevonden.</div>`;
 
       this.shadowRoot.innerHTML = css`
         <style>
@@ -1340,15 +1579,40 @@
           ${checkboxesHtml}
           <div class="kce-hint">Niks aangevinkt = alle kinderen tonen.</div>
         </div>
+        <div class="kce-field">
+          <label>Pushbericht naar bij een verzoek</label>
+          ${notifyCheckboxesHtml}
+          <div class="kce-hint">Alle aangevinkte telefoons krijgen een bericht zodra een kind credits of een beloning aanvraagt.</div>
+        </div>
+
+        <div class="kce-section">
+          <div class="kce-section-header kce-section-header-static">
+            <span>Taken (knoppen bij "Ik heb een klus gedaan")</span>
+          </div>
+          <div class="kce-section-body">
+            ${groupsHtml}
+            <button class="kce-add-btn" data-action="add-group">+ Nieuwe groep</button>
+          </div>
+        </div>
+        <div class="kce-hint">Zelfde standaardtaken als de ouderkaart tenzij hier aangepast.</div>
       `;
 
       const titleInput = this.shadowRoot.querySelector("#kce-title");
       if (titleInput) titleInput.addEventListener("change", (e) => this._update({ title: e.target.value }));
 
+      bindGroupsSection(this.shadowRoot, this);
+
       this.shadowRoot.querySelectorAll("input[data-kid]").forEach((el) => {
         el.addEventListener("change", () => {
           const checked = Array.from(this.shadowRoot.querySelectorAll("input[data-kid]:checked")).map((c) => c.dataset.kid);
           this._update({ kids: checked });
+        });
+      });
+
+      this.shadowRoot.querySelectorAll("input[data-notify]").forEach((el) => {
+        el.addEventListener("change", () => {
+          const checked = Array.from(this.shadowRoot.querySelectorAll("input[data-notify]:checked")).map((c) => c.dataset.notify);
+          this._update({ notify_services: checked });
         });
       });
     }
