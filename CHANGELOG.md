@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.1.2
+
+- **The "wat heb je gedaan" / confirm popups are no longer literally
+  fullscreen** - now ~85% of the screen, centered, with rounded corners
+  back. The confirm step's "Ja, versturen"/"Terug" buttons were
+  completely unstyled until now (default browser buttons, stuck in the
+  top-left corner) - they're now bigger, side by side, and everything
+  (icon, text, buttons) is centered on the page.
+- **Fixed the task icon tiles looking like bare floating emoji with huge
+  empty gaps** on a wide popup - the tile grid had no max-width, so on
+  the new wider popup it spread into far more columns than intended, and
+  the tiles had no visible border/shadow to read as buttons in the first
+  place. The grid is now capped at a sane width (centered, ~5 tiles per
+  row) and every tile has a visible border and shadow.
+- **The "spelregels" editor gained a small formatting toolbar** (vet,
+  cursief, kop, lijst) that applies markdown to the current textarea
+  selection, instead of requiring the markdown syntax to be typed by
+  hand.
+
 ## 0.1.1
 
 - **Fixed: the progress bar stopped growing once a kid's balance passed

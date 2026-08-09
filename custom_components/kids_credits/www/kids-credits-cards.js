@@ -233,14 +233,15 @@
     .kc-request-group-label:first-child { margin-top: 0; }
     .kc-icon-grid {
       display: grid; grid-template-columns: repeat(auto-fill, minmax(84px, 140px)); justify-content: center; gap: 12px;
-      margin-bottom: 16px;
+      margin: 0 auto 16px; max-width: 750px;
     }
     .kc-icon-tile {
-      aspect-ratio: 1; border: none; border-radius: 20px; background: var(--secondary-background-color);
+      aspect-ratio: 1; border: 1px solid var(--divider-color); border-radius: 20px; background: var(--secondary-background-color);
+      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
       cursor: pointer; display: flex; flex-direction: column; align-items: center; justify-content: center;
       gap: 4px; padding: 6px; transition: transform 0.1s ease, background 0.1s ease;
     }
-    .kc-icon-tile:hover, .kc-icon-tile:active { background: var(--primary-color); }
+    .kc-icon-tile:hover, .kc-icon-tile:active { background: var(--primary-color); border-color: var(--primary-color); }
     @media (prefers-reduced-motion: no-preference) {
       .kc-icon-tile:active { transform: scale(0.92); }
     }
@@ -393,9 +394,8 @@
       display: flex; flex-direction: column; overflow: hidden;
       box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
     }
-    .kc-modal-backdrop-fullscreen { padding: 0; }
     .kc-modal-fullscreen {
-      max-width: none; width: 100%; height: 100%; max-height: none; border-radius: 0;
+      max-width: 85vw; width: 85vw; max-height: 85vh; height: 85vh;
     }
     .kc-modal-header {
       display: flex; align-items: center; justify-content: space-between;
@@ -409,7 +409,20 @@
       font-size: 2em; width: 44px; height: 44px; border-radius: 50%;
       background: var(--secondary-background-color); display: flex; align-items: center; justify-content: center;
     }
-    .kc-modal-body { padding: 12px 16px; overflow-y: auto; }
+    .kc-modal-body { padding: 12px 16px; overflow-y: auto; flex: 1 1 auto; }
+    .kc-confirm-body {
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      text-align: center; min-height: 100%; gap: 24px;
+    }
+    .kc-confirm-emoji { font-size: 5em; line-height: 1; }
+    .kc-confirm-label { font-size: 1.5em; font-weight: 600; max-width: 480px; }
+    .kc-confirm-buttons { display: flex; flex-direction: row; flex-wrap: wrap; justify-content: center; gap: 16px; }
+    .kc-confirm-yes, .kc-confirm-back {
+      padding: 18px 28px; border-radius: 16px; border: none; font-size: 1.15em; font-weight: 700; cursor: pointer;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+    }
+    .kc-confirm-yes { background: var(--success-color, #43a047); color: #fff; }
+    .kc-confirm-back { background: var(--secondary-background-color); color: var(--primary-text-color); }
   `;
 
   // --------------------------------------------------------------------
@@ -1840,6 +1853,39 @@
     "- Rotzooien of niet luisteren kan credits kosten.",
   ].join("\n");
 
+  // Applies a markdown formatting action to a textarea's current selection
+  // (or inserts a placeholder if nothing's selected), matching what
+  // renderRulesMarkdown actually understands - bold/italic wrap the
+  // selection, heading/list prefix every selected line.
+  function applyMarkdownFormat(textarea, action) {
+    const value = textarea.value;
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+    const selected = value.slice(start, end);
+
+    if (action === "bold" || action === "italic") {
+      const marker = action === "bold" ? "**" : "*";
+      const placeholder = action === "bold" ? "vet" : "cursief";
+      const text = selected || placeholder;
+      textarea.value = value.slice(0, start) + marker + text + marker + value.slice(end);
+      const selStart = start + marker.length;
+      textarea.setSelectionRange(selStart, selStart + text.length);
+    } else if (action === "heading" || action === "list") {
+      const lineStart = value.lastIndexOf("\n", start - 1) + 1;
+      const prefix = action === "heading" ? "## " : "- ";
+      const chunk = value.slice(lineStart, end);
+      const replaced = chunk
+        .split("\n")
+        .map((line) => (line.startsWith(prefix) ? line : prefix + line))
+        .join("\n");
+      textarea.value = value.slice(0, lineStart) + replaced + value.slice(end);
+      textarea.setSelectionRange(lineStart, lineStart + replaced.length);
+    }
+
+    textarea.focus();
+    textarea.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+
   // Deliberately tiny - just enough markdown for a rules list (headings,
   // bullet lists, paragraphs, bold/italic), not a general parser.
   function renderRulesMarkdown(text) {
@@ -1970,6 +2016,12 @@
             width: 100%; min-height: 160px; padding: 8px; border-radius: 6px; border: 1px solid var(--divider-color);
             background: var(--card-background-color); color: var(--primary-text-color); font-family: inherit; box-sizing: border-box;
           }
+          .kce-md-toolbar { display: flex; gap: 6px; margin-bottom: 6px; }
+          .kce-md-toolbar button {
+            width: 34px; height: 30px; border-radius: 6px; border: 1px solid var(--divider-color);
+            background: var(--card-background-color); color: var(--primary-text-color); cursor: pointer; font-size: 0.95em;
+          }
+          .kce-md-toolbar button:hover { background: var(--secondary-background-color); }
         </style>
         <div class="kce-field">
           <label>Titel</label>
@@ -1979,13 +2031,24 @@
           <label><input type="checkbox" id="rc-collapsed" ${this._config.collapsed !== false ? "checked" : ""} /> Standaard ingeklapt</label>
         </div>
         <div class="kce-field">
-          <label>Regels (markdown: # kop, - lijst, **vet**)</label>
+          <label>Regels</label>
+          <div class="kce-md-toolbar">
+            <button type="button" data-md="bold" title="Vet"><strong>V</strong></button>
+            <button type="button" data-md="italic" title="Cursief"><em>C</em></button>
+            <button type="button" data-md="heading" title="Kop">H</button>
+            <button type="button" data-md="list" title="Lijst">&bull;</button>
+          </div>
           <textarea id="rc-rules">${escapeAttr(this._config.rules || DEFAULT_RULES)}</textarea>
         </div>
       `;
       this.shadowRoot.querySelector("#rc-title").addEventListener("change", (e) => this._update({ title: e.target.value }));
       this.shadowRoot.querySelector("#rc-collapsed").addEventListener("change", (e) => this._update({ collapsed: e.target.checked }));
       this.shadowRoot.querySelector("#rc-rules").addEventListener("change", (e) => this._update({ rules: e.target.value }));
+      this.shadowRoot.querySelectorAll("[data-md]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          applyMarkdownFormat(this.shadowRoot.querySelector("#rc-rules"), btn.dataset.md);
+        });
+      });
     }
   }
 
