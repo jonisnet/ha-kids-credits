@@ -196,10 +196,13 @@ featureless bar.
 
 `kids-credits-rules-card` - a small collapsible card (`<details>`, native
 browser collapse, no extra JS) for the family's house rules. Config:
-`title`, `collapsed` (default `true`), and `rules` (a markdown string -
-`#`/`##`/`###` headings, `- ` bullet lists, `**bold**`/`*italic*`,
-paragraphs; nothing fancier than that). Edit it visually the same way as
-the other cards.
+`title`, `collapsed` (default `true`), and `rules` (a small markdown-like
+string - `#`/`##`/`###` headings, `- ` bullet lists, `**bold**`/`*italic*`,
+`[center]...[/center]`/`[left]...[/left]`/`[right]...[/right]` paragraph
+alignment, plain paragraphs; nothing fancier than that). The editor has a
+formatting toolbar (bold, italic, three heading sizes, list, left/center/
+right) that applies these to the current selection, so none of it needs
+to be typed by hand.
 
 ## Services
 

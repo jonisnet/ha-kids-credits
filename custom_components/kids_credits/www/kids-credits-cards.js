@@ -1900,15 +1900,25 @@
       textarea.value = value.slice(0, start) + marker + text + marker + value.slice(end);
       const selStart = start + marker.length;
       textarea.setSelectionRange(selStart, selStart + text.length);
-    } else if (action === "heading" || action === "list") {
+    } else if (action === "h1" || action === "h2" || action === "h3" || action === "list") {
+      const prefix = action === "h1" ? "# " : action === "h2" ? "## " : action === "h3" ? "### " : "- ";
       const lineStart = value.lastIndexOf("\n", start - 1) + 1;
-      const prefix = action === "heading" ? "## " : "- ";
       const chunk = value.slice(lineStart, end);
       const replaced = chunk
         .split("\n")
-        .map((line) => (line.startsWith(prefix) ? line : prefix + line))
+        .map((line) => prefix + line.replace(/^(#{1,3}|-)\s+/, ""))
         .join("\n");
       textarea.value = value.slice(0, lineStart) + replaced + value.slice(end);
+      textarea.setSelectionRange(lineStart, lineStart + replaced.length);
+    } else if (action === "align-left" || action === "align-center" || action === "align-right") {
+      const dir = action.slice("align-".length);
+      const lineStart = value.lastIndexOf("\n", start - 1) + 1;
+      const nextBreak = value.indexOf("\n", end);
+      const lineEnd = nextBreak === -1 ? value.length : nextBreak;
+      const chunk = value.slice(lineStart, lineEnd);
+      const stripped = chunk.replace(/^\[(left|center|right)\]([\s\S]*)\[\/\1\]$/, "$2").trim();
+      const replaced = dir === "left" ? stripped : `[${dir}]${stripped}[/${dir}]`;
+      textarea.value = value.slice(0, lineStart) + replaced + value.slice(lineEnd);
       textarea.setSelectionRange(lineStart, lineStart + replaced.length);
     }
 
@@ -1916,8 +1926,8 @@
     textarea.dispatchEvent(new Event("change", { bubbles: true }));
   }
 
-  // Deliberately tiny - just enough markdown for a rules list (headings,
-  // bullet lists, paragraphs, bold/italic), not a general parser.
+  // Deliberately small - just enough markdown for a rules list (headings,
+  // bullet lists, paragraph alignment, bold/italic), not a general parser.
   function renderRulesMarkdown(text) {
     const lines = escapeAttr(text || "").split("\n");
     let html = "";
@@ -1932,6 +1942,12 @@
       const line = rawLine.trim();
       if (!line) {
         closeList();
+        continue;
+      }
+      const aligned = line.match(/^\[(left|center|right)\]([\s\S]*)\[\/\1\]$/);
+      if (aligned) {
+        closeList();
+        html += `<p style="text-align:${aligned[1]}">${aligned[2]}</p>`;
         continue;
       }
       const heading = line.match(/^(#{1,3})\s+(.*)/);
@@ -2046,12 +2062,13 @@
             width: 100%; min-height: 160px; padding: 8px; border-radius: 6px; border: 1px solid var(--divider-color);
             background: var(--card-background-color); color: var(--primary-text-color); font-family: inherit; box-sizing: border-box;
           }
-          .kce-md-toolbar { display: flex; gap: 6px; margin-bottom: 6px; }
+          .kce-md-toolbar { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
           .kce-md-toolbar button {
-            width: 34px; height: 30px; border-radius: 6px; border: 1px solid var(--divider-color);
+            min-width: 34px; height: 30px; padding: 0 8px; border-radius: 6px; border: 1px solid var(--divider-color);
             background: var(--card-background-color); color: var(--primary-text-color); cursor: pointer; font-size: 0.95em;
           }
           .kce-md-toolbar button:hover { background: var(--secondary-background-color); }
+          .kce-md-sep { width: 1px; background: var(--divider-color); margin: 2px 2px; }
         </style>
         <div class="kce-field">
           <label>Titel</label>
@@ -2065,8 +2082,16 @@
           <div class="kce-md-toolbar">
             <button type="button" data-md="bold" title="Vet"><strong>V</strong></button>
             <button type="button" data-md="italic" title="Cursief"><em>C</em></button>
-            <button type="button" data-md="heading" title="Kop">H</button>
+            <span class="kce-md-sep"></span>
+            <button type="button" data-md="h1" title="Grote kop">H1</button>
+            <button type="button" data-md="h2" title="Middelgrote kop">H2</button>
+            <button type="button" data-md="h3" title="Kleine kop">H3</button>
+            <span class="kce-md-sep"></span>
             <button type="button" data-md="list" title="Lijst">&bull;</button>
+            <span class="kce-md-sep"></span>
+            <button type="button" data-md="align-left" title="Links uitlijnen">Links</button>
+            <button type="button" data-md="align-center" title="Centreren">Midden</button>
+            <button type="button" data-md="align-right" title="Rechts uitlijnen">Rechts</button>
           </div>
           <textarea id="rc-rules">${escapeAttr(this._config.rules || DEFAULT_RULES)}</textarea>
         </div>

@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.4
+
+- **Expanded the spelregels formatting toolbar**: three heading sizes
+  (H1/H2/H3) instead of one fixed kop size, and left/center/right
+  alignment buttons (new `[center]...[/center]`-style markers, since
+  plain markdown has no alignment syntax of its own). Re-clicking an
+  alignment button (or picking "Links") cleanly replaces any alignment
+  already applied to that line instead of stacking markers.
+
 ## 0.1.3
 
 - **Kids-card editor's notify-device picker replaced with an add/remove
