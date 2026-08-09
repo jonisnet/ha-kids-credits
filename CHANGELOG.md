@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased
+
+- **Icon tiles now show a short caption** (e.g. "Knutselen") instead of no
+  text at all, and tapping one opens a confirm step showing the full task
+  description before the request is actually sent - icon-only turned out to
+  not be enough information on its own. Each task now has three parts:
+  `icon`, `short` (tile caption), `label` (full description, still what's
+  sent to the parent for approval).
+- **Kid photos on the kids card are ~4x bigger** (48px -> 192px), and the
+  upload pipeline now targets a slightly higher-resolution crop (320px) to
+  match.
+- **Fixed a real bug**: taps sometimes did nothing right after awarding
+  credits, or other unrelated activity. A full card re-render replaces every
+  button's DOM node; if that happened between a tap's press and release
+  (likely right after an award, since the award itself triggers a
+  re-render), the tap silently had nothing to land on. Re-renders triggered
+  by hass ticks are now coalesced to at most one per animation frame instead
+  of one per tick, shrinking that window a lot.
+
 ## 0.0.4
 
 - **The kids card's "wat heb je gedaan" popup is now a full-screen grid of

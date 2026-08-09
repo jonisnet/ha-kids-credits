@@ -43,6 +43,21 @@
     return hass.callService(DOMAIN, service, data);
   }
 
+  // Coalesces bursts of hass ticks (very common - many entities can update
+  // within the same second) into one render per animation frame instead of
+  // one full DOM teardown-and-rebuild per tick. Without this, a real-world
+  // tap can land between touchstart and click while the target button is
+  // mid-replacement from an unrelated re-render, silently dropping the tap -
+  // most noticeable right after an award, since that itself triggers a tick.
+  function scheduleRerender(self, doRerender) {
+    if (self.__rerenderScheduled) return;
+    self.__rerenderScheduled = true;
+    requestAnimationFrame(() => {
+      self.__rerenderScheduled = false;
+      doRerender();
+    });
+  }
+
   function getKidEntities(hass) {
     if (!hass) return [];
     return Object.values(hass.states)
@@ -91,7 +106,7 @@
   // downsizes to a small JPEG, so the resulting data: URI is reliably well
   // under the backend's MAX_PHOTO_DATA_URI_LENGTH regardless of the
   // original photo's resolution.
-  function processPhotoFile(file, targetSize = 240, quality = 0.85) {
+  function processPhotoFile(file, targetSize = 320, quality = 0.85) {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onerror = () => reject(new Error("kon het bestand niet lezen"));
@@ -221,61 +236,65 @@
   // misbehavior - those default to 1 and get a stepper in the popup so the
   // amount is adjustable per click rather than silently guessed.
   // --------------------------------------------------------------------
-  // Each task is { icon, label }. `icon` is a plain emoji (not mdi:) so it
-  // renders identically everywhere with zero extra markup - kept editable
-  // per task in the editor. normalizeTask() below accepts a legacy plain
-  // string too, so an older card config with string-only tasks still works.
+  // Each task is { icon, short, label }. `icon` is a plain emoji, `short` is
+  // the caption shown under it on the kids card's icon tiles (kept short on
+  // purpose - the full `label` only shows in the confirm step after tapping,
+  // and is what's actually sent as the request's reason / used everywhere
+  // else). normalizeTask() below accepts a legacy string or a {icon,label}
+  // object missing `short`, so older card configs still work.
   const DEFAULT_GROUPS = [
     {
       points: 5,
       label: "5 credits",
       tasks: [
-        { icon: "🎨", label: "20 minuten serieus knutselen of tekenen/kleuren (zonder tablet, zelf opruimen)" },
-        { icon: "📖", label: "20 minuten hardop voorlezen uit een boek" },
-        { icon: "🧩", label: "Een puzzel maken in een oefen- of puzzelboekje" },
+        { icon: "🎨", short: "Knutselen", label: "20 minuten serieus knutselen of tekenen/kleuren (zonder tablet, zelf opruimen)" },
+        { icon: "📖", short: "Voorlezen", label: "20 minuten hardop voorlezen uit een boek" },
+        { icon: "🧩", short: "Puzzelen", label: "Een puzzel maken in een oefen- of puzzelboekje" },
       ],
     },
     {
       points: 3,
       label: "3 credits",
       tasks: [
-        { icon: "👕", label: "Vuile was in de wasmand doen en in de badkamer zetten (donderdag)" },
-        { icon: "🛏️", label: "Bed opmaken (deze week)" },
-        { icon: "🧹", label: "Kamer opruimen, ook stofzuigen, bureau en prullenbak legen" },
+        { icon: "👕", short: "Was wegbrengen", label: "Vuile was in de wasmand doen en in de badkamer zetten (donderdag)" },
+        { icon: "🛏️", short: "Bed opmaken", label: "Bed opmaken (deze week)" },
+        { icon: "🧹", short: "Kamer opruimen", label: "Kamer opruimen, ook stofzuigen, bureau en prullenbak legen" },
       ],
     },
     {
       points: 2,
       label: "2 credits",
       tasks: [
-        { icon: "🍽️", label: "Vaatwasser uitruimen" },
-        { icon: "🧽", label: "Kleine tafel opruimen en nat afnemen" },
-        { icon: "🪑", label: "Grote tafel opruimen en nat afnemen" },
-        { icon: "📄", label: "Papiermand legen in de papiercontainer (blauwe deksel)" },
-        { icon: "🗑️", label: "Grote zwarte prullenbak legen" },
-        { icon: "🧺", label: "Wasmachine aanzetten met vuile was uit 1 wasmand (dinsdag/vrijdag)" },
+        { icon: "🍽️", short: "Vaatwasser", label: "Vaatwasser uitruimen" },
+        { icon: "🧽", short: "Kleine tafel", label: "Kleine tafel opruimen en nat afnemen" },
+        { icon: "🪑", short: "Grote tafel", label: "Grote tafel opruimen en nat afnemen" },
+        { icon: "📄", short: "Papier legen", label: "Papiermand legen in de papiercontainer (blauwe deksel)" },
+        { icon: "🗑️", short: "Prullenbak", label: "Grote zwarte prullenbak legen" },
+        { icon: "🧺", short: "Was draaien", label: "Wasmachine aanzetten met vuile was uit 1 wasmand (dinsdag/vrijdag)" },
       ],
     },
     {
       points: 1,
       label: "1 credit (huishoudelijke taak)",
       tasks: [
-        { icon: "🛒", label: "Boodschappen doen" },
-        { icon: "🌀", label: "Wassen draaien" },
-        { icon: "🚽", label: "Toiletten reinigen" },
-        { icon: "👚", label: "Was opvouwen/opruimen" },
-        { icon: "🐱", label: "Kattenbak schoon" },
-        { icon: "🛋️", label: "Huiskamer opruimen" },
-        { icon: "🚿", label: "Sanitair reinigen" },
-        { icon: "🗑️", label: "Afvalbakken legen" },
-        { icon: "🌪️", label: "Stofzuigen" },
-        { icon: "🧹", label: "Vegen" },
+        { icon: "🛒", short: "Boodschappen", label: "Boodschappen doen" },
+        { icon: "🌀", short: "Wasje draaien", label: "Wassen draaien" },
+        { icon: "🚽", short: "Toilet poetsen", label: "Toiletten reinigen" },
+        { icon: "👚", short: "Was opvouwen", label: "Was opvouwen/opruimen" },
+        { icon: "🐱", short: "Kattenbak", label: "Kattenbak schoon" },
+        { icon: "🛋️", short: "Huiskamer", label: "Huiskamer opruimen" },
+        { icon: "🚿", short: "Sanitair", label: "Sanitair reinigen" },
+        { icon: "🗑️", short: "Afval legen", label: "Afvalbakken legen" },
+        { icon: "🌪️", short: "Stofzuigen", label: "Stofzuigen" },
+        { icon: "🧹", short: "Vegen", label: "Vegen" },
       ],
     },
   ];
 
   function normalizeTask(task) {
-    return typeof task === "string" ? { icon: "⭐", label: task } : task;
+    if (typeof task === "string") return { icon: "⭐", short: task, label: task };
+    if (!task.short) return { ...task, short: task.label };
+    return task;
   }
 
   const DEFAULT_DEDUCTIONS = [
@@ -403,6 +422,10 @@
     }
 
     _safeRerender() {
+      scheduleRerender(this, () => this._doSafeRerender());
+    }
+
+    _doSafeRerender() {
       if (!this.shadowRoot) return;
       if (this.shadowRoot.querySelector(".kc-modal-backdrop")) return;
       const active = this.shadowRoot.activeElement;
@@ -836,6 +859,10 @@
     }
 
     _safeRerender() {
+      scheduleRerender(this, () => this._doSafeRerender());
+    }
+
+    _doSafeRerender() {
       if (!this.shadowRoot) return;
       if (this.shadowRoot.querySelector(".kc-modal-backdrop")) return;
       this._render();
@@ -868,11 +895,11 @@
     }
 
     _openRequestFormModal(kidId) {
-      // Big icon tiles, no visible text: a 6-year-old who can't read/write
-      // well yet can still tap the picture of the task they did. No
-      // credit-tier headers either (those are text too, and the amount is
-      // only ever a suggestion - the parent confirms it on approval). Falls
-      // back to a free-text option at the bottom for anything not pictured.
+      // Big icon tiles with a short caption (full task text doesn't fit on
+      // a tile and a 6-year-old can't read a long sentence anyway) - tapping
+      // one goes to a confirm step showing the full description before
+      // anything is actually sent. Falls back to free text for anything not
+      // pictured.
       const allTasks = configGroups(this._config).flatMap((group) =>
         group.tasks.map(normalizeTask).map((task) => ({ ...task, points: group.points }))
       );
@@ -882,12 +909,13 @@
           (task) => css`
             <button
               class="kc-icon-tile"
-              data-action="submit-task-request"
+              data-action="pick-task-request"
               data-amount="${task.points}"
+              data-icon="${escapeAttr(task.icon)}"
               data-reason="${escapeAttr(task.label)}"
-              title="${escapeAttr(task.label)}"
             >
               <span class="kc-icon-tile-emoji">${escapeAttr(task.icon)}</span>
+              <span class="kc-icon-tile-caption">${escapeAttr(task.short)}</span>
             </button>
           `
         )
@@ -902,15 +930,13 @@
         </div>
       `;
       const modal = showModal(this.shadowRoot, "Wat heb je gedaan?", body, { fullscreen: true, bigClose: true });
-      modal.querySelectorAll('[data-action="submit-task-request"]').forEach((btn) => {
-        btn.addEventListener("click", async () => {
-          await callService(this._hass, "request_credit", {
-            kid_id: kidId,
+      modal.querySelectorAll('[data-action="pick-task-request"]').forEach((btn) => {
+        btn.addEventListener("click", () => {
+          this._openConfirmRequestModal(kidId, {
+            icon: btn.dataset.icon,
             reason: btn.dataset.reason,
-            suggested_amount: parseInt(btn.dataset.amount, 10),
+            amount: parseInt(btn.dataset.amount, 10),
           });
-          hideModal(this.shadowRoot);
-          await this._notifyParentsOfRequest(kidId, `vraagt credits aan voor "${btn.dataset.reason}"`);
         });
       });
       modal.querySelector('[data-action="submit-text-request"]').addEventListener("click", async () => {
@@ -920,6 +946,32 @@
         await callService(this._hass, "request_credit", { kid_id: kidId, reason });
         hideModal(this.shadowRoot);
         await this._notifyParentsOfRequest(kidId, `vraagt credits aan voor "${reason}"`);
+      });
+    }
+
+    _openConfirmRequestModal(kidId, task) {
+      const body = css`
+        <div class="kc-confirm-body">
+          <span class="kc-confirm-emoji">${escapeAttr(task.icon)}</span>
+          <div class="kc-confirm-label">${escapeAttr(task.reason)}</div>
+          <div class="kc-confirm-buttons">
+            <button class="kc-confirm-yes" data-action="confirm-yes">✅ Ja, versturen</button>
+            <button class="kc-confirm-back" data-action="confirm-back">↩️ Terug</button>
+          </div>
+        </div>
+      `;
+      const modal = showModal(this.shadowRoot, "Klopt dit?", body, { fullscreen: true, bigClose: true });
+      modal.querySelector('[data-action="confirm-yes"]').addEventListener("click", async () => {
+        await callService(this._hass, "request_credit", {
+          kid_id: kidId,
+          reason: task.reason,
+          suggested_amount: task.amount,
+        });
+        hideModal(this.shadowRoot);
+        await this._notifyParentsOfRequest(kidId, `vraagt credits aan voor "${task.reason}"`);
+      });
+      modal.querySelector('[data-action="confirm-back"]').addEventListener("click", () => {
+        this._openRequestFormModal(kidId);
       });
     }
 
@@ -967,11 +1019,11 @@
           .kc-title { font-size: 1.4em; font-weight: 700; margin-bottom: 16px; text-align: center; }
           .kc-grid { display: flex; gap: 20px; flex-wrap: wrap; justify-content: center; }
           .kc-kid-tile {
-            flex: 1 1 200px; max-width: 280px; text-align: center; border-radius: 16px;
+            flex: 1 1 240px; max-width: 340px; text-align: center; border-radius: 16px;
             background: var(--secondary-background-color); padding: 20px 16px;
           }
-          .kc-kid-icon { --mdc-icon-size: 48px; color: var(--primary-color); }
-          .kc-kid-icon, img.kc-kid-icon { width: 48px; height: 48px; border-radius: 50%; object-fit: cover; cursor: pointer; }
+          .kc-kid-icon { --mdc-icon-size: 192px; color: var(--primary-color); }
+          .kc-kid-icon, img.kc-kid-icon { width: 192px; height: 192px; border-radius: 50%; object-fit: cover; cursor: pointer; }
           .kc-kid-name { font-size: 1.2em; font-weight: 700; margin: 8px 0 4px; cursor: pointer; }
           .kc-kid-name:hover { text-decoration: underline; }
           .kc-kid-balance { font-size: 2.4em; font-weight: 800; color: var(--primary-color); line-height: 1; }
@@ -1272,6 +1324,10 @@
     }
 
     _safeRerender() {
+      scheduleRerender(this, () => this._doSafeRerender());
+    }
+
+    _doSafeRerender() {
       if (!this.shadowRoot) return;
       const active = this.shadowRoot.activeElement;
       if (active && active.matches && active.matches(FOCUSABLE_INPUT_SELECTOR)) return;
@@ -1547,6 +1603,10 @@
     }
 
     _safeRerender() {
+      scheduleRerender(this, () => this._doSafeRerender());
+    }
+
+    _doSafeRerender() {
       if (!this.shadowRoot) return;
       const active = this.shadowRoot.activeElement;
       if (active && active.matches && active.matches(FOCUSABLE_INPUT_SELECTOR)) return;
