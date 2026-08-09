@@ -18,8 +18,18 @@ works if you prefer it.
   thing it can do beyond displaying is let a kid *submit a request* (for
   credit or a reward), which never changes a balance by itself and always
   needs a parent's approval on their own card. Its `kids` config picks which
-  kid(s) show on it (leave empty for "all"), so you can show both kids
-  together or give each their own card. Meant for a shared kids tablet.
+  kid(s) show on it (leave empty for "all") *and their order* - the editor's
+  ▲/▼ buttons reorder them - so you can show both kids together in one card
+  (recommended for a shared kids tablet) or give each their own card. A
+  **"Titel tonen"** toggle in the editor hides the card's title entirely.
+
+  Wondering why a combined card still looks narrow in a wide browser
+  window? That's Home Assistant's own default Masonry view splitting a
+  wide screen into multiple columns (by design, so several cards can sit
+  side by side) - the card already fills whatever column width HA hands
+  it. For one card spanning the whole width, switch that view's type
+  (e.g. to Panel, or the Sections view) rather than expecting the card
+  itself to break out of its column.
 
 There is no login/permission system inside the integration itself — "only
 parents can change credits" is enforced simply by which dashboard/device a

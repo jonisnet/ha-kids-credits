@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.0.9
+
+- **Fixed the task-request icon tiles becoming huge on a wide screen.**
+  0.0.8's "max 5 per row" logic sized each tile as a fraction of the
+  container's own width, so on a wide desktop browser that meant tiles of
+  350px+ with a tiny icon lost in the middle. Tiles are now capped at a
+  sane fixed size (84-140px) on any screen, and the grid simply wraps to
+  more columns on wider screens instead of stretching a handful of tiles.
+- **The combi kids-card editor can now reorder which kid shows first**
+  (▲/▼ per kid) and has a **"Titel tonen"** toggle to hide the card's
+  title entirely. The card previously always showed kids in alphabetical
+  order regardless of the order they were picked in - the `kids` config
+  order is now respected.
+- Investigated the "card still looks narrow on a wide browser" report:
+  the card itself does fill its column (confirmed live - `:host` is
+  `block` and it takes the full width Home Assistant hands it). The ~500px
+  cap comes from Home Assistant's own default Masonry view, which splits
+  wide screens into multiple columns by design so several cards can sit
+  side by side - not something a card's own CSS can or should override.
+  A single full-width card needs a different view type (e.g. Panel, or
+  the Sections view) rather than a card change.
+
 ## 0.0.8
 
 - **Fixed the cards not using the available width.** Both custom elements

@@ -224,7 +224,7 @@
     .kc-request-group-label { font-size: 0.8em; font-weight: 700; color: var(--secondary-text-color); margin: 12px 0 2px; text-transform: uppercase; letter-spacing: 0.02em; }
     .kc-request-group-label:first-child { margin-top: 0; }
     .kc-icon-grid {
-      display: grid; grid-template-columns: repeat(auto-fill, minmax(max(84px, calc((100% - 48px) / 5)), 1fr)); gap: 12px;
+      display: grid; grid-template-columns: repeat(auto-fill, minmax(84px, 140px)); justify-content: center; gap: 12px;
       margin-bottom: 16px;
     }
     .kc-icon-tile {
@@ -1052,8 +1052,11 @@
       const hass = this._hass;
       const allKids = getKidEntities(hass);
       const wanted = this._config.kids && this._config.kids.length ? this._config.kids : null;
-      const kids = wanted ? allKids.filter((st) => wanted.includes(st.attributes.kid_id)) : allKids;
+      const kids = wanted
+        ? wanted.map((id) => allKids.find((st) => st.attributes.kid_id === id)).filter(Boolean)
+        : allKids;
       const title = this._config.title || "Onze credits";
+      const showTitle = this._config.show_title !== false;
 
       const kidsHtml = kids.length
         ? css`<div class="kc-grid">${kids.map((st) => this._renderKid(st)).join("")}</div>`
@@ -1107,7 +1110,7 @@
         </style>
         <ha-card>
           <div class="card-content">
-            <div class="kc-title">${escapeAttr(title)}</div>
+            ${showTitle ? `<div class="kc-title">${escapeAttr(title)}</div>` : ""}
             ${kidsHtml}
           </div>
         </ha-card>
@@ -1677,22 +1680,37 @@
       if (!this.shadowRoot) return;
       const hass = this._hass;
       const config = this._config;
-      const kids = getKidEntities(hass);
-      const selected = new Set(config.kids || []);
+      const allKids = getKidEntities(hass);
       const groupsHtml = groupsSectionHtml(config, this._expanded.groups);
       const notifyServices = getNotifyServices(hass);
       const selectedNotify = new Set(config.notify_services || []);
 
-      const checkboxesHtml = kids.length
-        ? kids
-            .map(
-              (st) => css`
-                <label class="kce-checkbox-row">
-                  <input type="checkbox" data-kid="${escapeAttr(st.attributes.kid_id)}" ${selected.has(st.attributes.kid_id) ? "checked" : ""} />
-                  ${escapeAttr(st.attributes.friendly_name)}
-                </label>
-              `
-            )
+      // config.kids (when set) is both "which kids show" AND the order they
+      // show in - configured ids first (in their saved order), then any
+      // other known kid not yet included, appended alphabetically.
+      const configuredIds = config.kids && config.kids.length ? config.kids.filter((id) => allKids.some((k) => k.attributes.kid_id === id)) : [];
+      const remainingIds = allKids.map((k) => k.attributes.kid_id).filter((id) => !configuredIds.includes(id));
+      const kidOrder = [...configuredIds, ...remainingIds];
+      const checkedIds = new Set(config.kids && config.kids.length ? config.kids : allKids.map((k) => k.attributes.kid_id));
+
+      const checkboxesHtml = kidOrder.length
+        ? kidOrder
+            .map((id, idx) => {
+              const st = allKids.find((k) => k.attributes.kid_id === id);
+              const name = st ? st.attributes.friendly_name : id;
+              return css`
+                <div class="kce-kid-row">
+                  <label class="kce-checkbox-row">
+                    <input type="checkbox" data-kid="${escapeAttr(id)}" ${checkedIds.has(id) ? "checked" : ""} />
+                    ${escapeAttr(name)}
+                  </label>
+                  <span class="kce-kid-move">
+                    <button type="button" data-move="up" data-kid="${escapeAttr(id)}" ${idx === 0 ? "disabled" : ""}>▲</button>
+                    <button type="button" data-move="down" data-kid="${escapeAttr(id)}" ${idx === kidOrder.length - 1 ? "disabled" : ""}>▼</button>
+                  </span>
+                </div>
+              `;
+            })
             .join("")
         : `<div class="kce-empty">Geen kinderen gevonden - stel Kids Credits eerst in.</div>`;
 
@@ -1716,15 +1734,25 @@
           .kce-checkbox-row { display: flex; align-items: center; gap: 8px; padding: 6px 0; cursor: pointer; }
           .kce-empty { color: var(--secondary-text-color); }
           .kce-hint { font-size: 0.8em; color: var(--secondary-text-color); margin-top: 4px; }
+          .kce-kid-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+          .kce-kid-move { display: flex; gap: 4px; flex-shrink: 0; }
+          .kce-kid-move button {
+            width: 26px; height: 26px; border-radius: 6px; border: 1px solid var(--divider-color);
+            background: var(--card-background-color); color: var(--primary-text-color); cursor: pointer;
+          }
+          .kce-kid-move button:disabled { opacity: 0.3; cursor: default; }
         </style>
         <div class="kce-field">
           <label>Titel</label>
           <input type="text" id="kce-title" value="${escapeAttr(config.title || "")}" />
         </div>
         <div class="kce-field">
-          <label>Kinderen op deze kaart</label>
+          <label><input type="checkbox" id="kce-show-title" ${config.show_title !== false ? "checked" : ""} /> Titel tonen</label>
+        </div>
+        <div class="kce-field">
+          <label>Kinderen op deze kaart (volgorde = weergavevolgorde)</label>
           ${checkboxesHtml}
-          <div class="kce-hint">Niks aangevinkt = alle kinderen tonen.</div>
+          <div class="kce-hint">Niks aangevinkt = alle kinderen tonen. Pijltjes verplaatsen een kind naar boven/onder.</div>
         </div>
         <div class="kce-field">
           <label>Pushbericht naar bij een verzoek</label>
@@ -1747,12 +1775,29 @@
       const titleInput = this.shadowRoot.querySelector("#kce-title");
       if (titleInput) titleInput.addEventListener("change", (e) => this._update({ title: e.target.value }));
 
+      const showTitleInput = this.shadowRoot.querySelector("#kce-show-title");
+      if (showTitleInput) showTitleInput.addEventListener("change", (e) => this._update({ show_title: e.target.checked }));
+
       bindGroupsSection(this.shadowRoot, this);
 
       this.shadowRoot.querySelectorAll("input[data-kid]").forEach((el) => {
         el.addEventListener("change", () => {
+          // DOM order already matches kidOrder (rows render in that order).
           const checked = Array.from(this.shadowRoot.querySelectorAll("input[data-kid]:checked")).map((c) => c.dataset.kid);
           this._update({ kids: checked });
+        });
+      });
+
+      this.shadowRoot.querySelectorAll("[data-move]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const id = btn.dataset.kid;
+          const dir = btn.dataset.move;
+          const order = kidOrder.slice();
+          const i = order.indexOf(id);
+          const j = dir === "up" ? i - 1 : i + 1;
+          if (i < 0 || j < 0 || j >= order.length) return;
+          [order[i], order[j]] = [order[j], order[i]];
+          this._update({ kids: order.filter((kid) => checkedIds.has(kid)) });
         });
       });
 
