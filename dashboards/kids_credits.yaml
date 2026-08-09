@@ -1,19 +1,43 @@
 # Example Lovelace configuration for Kids Credits.
 #
-# Put the "Ouders" view on a dashboard only you and your partner open
-# (e.g. your own phones), and the "Kinderen" view on the shared kitchen/
-# kids tablet. This is the enforcement mechanism for "only parents can
-# award or deduct credits" - the parent card is simply never shown on the
-# kids' dashboard.
+# Each parent gets their OWN view with their own card per kid - a card is
+# tied to one kid_id + one actor, so there's no shared free-text "who am I"
+# field to get wrong. Put the "Papa" view only where papa actually looks
+# (his own phone dashboard), "Mama" only where mama looks, and "Kinderen"
+# on the shared kitchen/kids tablet. This is the enforcement mechanism for
+# "only parents can award or deduct credits" - the parent cards are simply
+# never shown on the kids' dashboard.
+#
+# Replace `limanah` / `aline` below with the kid_id shown in each kid's
+# sensor.<naam> entity (Settings -> Devices & services -> Kids Credits).
 
 title: Kids Credits
 views:
-  - title: Ouders
-    path: ouders
+  - title: Papa
+    path: papa
     icon: mdi:account-supervisor
     cards:
       - type: custom:kids-credits-parent-card
-        title: Credits toekennen
+        title: Limanah
+        kid_id: limanah
+        actor: papa
+      - type: custom:kids-credits-parent-card
+        title: Aline
+        kid_id: aline
+        actor: papa
+
+  - title: Mama
+    path: mama
+    icon: mdi:account-supervisor
+    cards:
+      - type: custom:kids-credits-parent-card
+        title: Limanah
+        kid_id: limanah
+        actor: mama
+      - type: custom:kids-credits-parent-card
+        title: Aline
+        kid_id: aline
+        actor: mama
 
   - title: Kinderen
     path: kinderen
@@ -21,3 +45,4 @@ views:
     cards:
       - type: custom:kids-credits-kids-card
         title: Onze credits
+        # kids: [limanah, aline]   # leeg/weggelaten = toon alle kinderen

@@ -126,6 +126,93 @@ async def test_sync_kids_orphans_but_does_not_delete_history_for_a_removed_kid(h
     assert manager.balance("aline") == 4
 
 
+async def test_set_photo_updates_and_persists(hass: HomeAssistant):
+    manager = await _manager(hass)
+    await manager.async_set_photo("limanah", "data:image/png;base64,abcd")
+    assert manager.kids["limanah"].photo == "data:image/png;base64,abcd"
+
+    reloaded = KidsCreditsManager(hass, "test_entry")
+    await reloaded.async_setup(["Limanah", "Aline"])
+    assert reloaded.kids["limanah"].photo == "data:image/png;base64,abcd"
+
+
+async def test_set_photo_empty_string_clears_it(hass: HomeAssistant):
+    manager = await _manager(hass)
+    await manager.async_set_photo("limanah", "data:image/png;base64,abcd")
+    await manager.async_set_photo("limanah", None)
+    assert manager.kids["limanah"].photo is None
+
+
+async def test_set_photo_rejects_oversized_upload(hass: HomeAssistant):
+    manager = await _manager(hass)
+    huge = "data:image/png;base64," + ("A" * 500_000)
+    with pytest.raises(ServiceValidationError):
+        await manager.async_set_photo("limanah", huge)
+
+
+async def test_request_credit_creates_a_pending_request_without_changing_balance(hass: HomeAssistant):
+    manager = await _manager(hass)
+    request = await manager.async_request_credit("limanah", "Kamer opgeruimd")
+
+    assert request.status == "pending"
+    assert manager.balance("limanah") == 0
+    assert manager.requests_for("limanah")[0].reason == "Kamer opgeruimd"
+
+
+async def test_approve_request_awards_credits_and_resolves_it(hass: HomeAssistant):
+    manager = await _manager(hass)
+    request = await manager.async_request_credit("limanah", "Kamer opgeruimd")
+
+    approved = await manager.async_approve_request(request.id, 3, "papa")
+
+    assert approved.status == "approved"
+    assert approved.amount == 3
+    assert approved.actor == "papa"
+    assert manager.balance("limanah") == 3
+    assert manager.history("limanah")[0].reason == "Kamer opgeruimd"
+
+
+async def test_reject_request_does_not_change_balance(hass: HomeAssistant):
+    manager = await _manager(hass)
+    request = await manager.async_request_credit("aline", "Vaatwasser uitgeruimd")
+
+    rejected = await manager.async_reject_request(request.id, "mama")
+
+    assert rejected.status == "rejected"
+    assert manager.balance("aline") == 0
+
+
+async def test_approve_request_rejects_an_already_resolved_request(hass: HomeAssistant):
+    manager = await _manager(hass)
+    request = await manager.async_request_credit("limanah", "Kamer opgeruimd")
+    await manager.async_approve_request(request.id, 3, "papa")
+
+    with pytest.raises(ServiceValidationError):
+        await manager.async_approve_request(request.id, 5, "papa")
+    with pytest.raises(ServiceValidationError):
+        await manager.async_reject_request(request.id, "papa")
+    # balance must not change from the rejected second approval attempt
+    assert manager.balance("limanah") == 3
+
+
+async def test_approve_request_rejects_unknown_request_id(hass: HomeAssistant):
+    manager = await _manager(hass)
+    with pytest.raises(ServiceValidationError):
+        await manager.async_approve_request("nonexistent", 3, "papa")
+
+
+async def test_requests_persist_across_reload(hass: HomeAssistant):
+    manager = await _manager(hass)
+    request = await manager.async_request_credit("limanah", "Kamer opgeruimd")
+    await manager.async_approve_request(request.id, 3, "papa")
+    await manager.async_request_credit("aline", "Vaatwasser uitgeruimd")
+
+    reloaded = KidsCreditsManager(hass, "test_entry")
+    await reloaded.async_setup(["Limanah", "Aline"])
+    assert len(reloaded.requests) == 2
+    assert reloaded.balance("limanah") == 3
+
+
 async def test_award_and_deduct_persist_across_reload(hass: HomeAssistant):
     manager = await _manager(hass)
     await manager.async_award("limanah", 3, "a", None)

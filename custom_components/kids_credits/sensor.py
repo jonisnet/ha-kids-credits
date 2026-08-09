@@ -90,6 +90,7 @@ class KidsCreditsSensor(SensorEntity):
         balance = self._manager.balance(self._kid.id)
         return {
             "kid_id": self._kid.id,
+            "photo": self._kid.photo,
             "reward_threshold": threshold,
             "credits_until_reward": max(threshold - balance, 0),
             "reward_available": balance >= threshold,
@@ -104,5 +105,17 @@ class KidsCreditsSensor(SensorEntity):
                     "actor": e.actor,
                 }
                 for e in self._manager.history(self._kid.id)
+            ],
+            "requests": [
+                {
+                    "id": r.id,
+                    "reason": r.reason,
+                    "status": r.status,
+                    "created_at": r.created_at,
+                    "resolved_at": r.resolved_at,
+                    "actor": r.actor,
+                    "amount": r.amount,
+                }
+                for r in self._manager.requests_for(self._kid.id)
             ],
         }

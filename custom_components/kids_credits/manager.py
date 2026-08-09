@@ -1,21 +1,38 @@
-"""Runtime manager: holds kids + the credit ledger for one config entry."""
+"""Runtime manager: holds kids, the credit ledger and credit requests for one config entry."""
 from __future__ import annotations
 
 import logging
+import time
 
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 
-from .const import DEFAULT_ICON, MAX_HISTORY_PER_KID, SIGNAL_UPDATED
-from .models import Kid, LedgerEntry, new_entry_id, slugify_id
+from .const import (
+    DEFAULT_ICON,
+    MAX_HISTORY_PER_KID,
+    MAX_PHOTO_DATA_URI_LENGTH,
+    MAX_REQUESTS_PER_KID,
+    SIGNAL_UPDATED,
+)
+from .models import (
+    STATUS_APPROVED,
+    STATUS_PENDING,
+    STATUS_REJECTED,
+    CreditRequest,
+    Kid,
+    LedgerEntry,
+    new_entry_id,
+    slugify_id,
+)
 from .store import KidsCreditsStore
 
 _LOGGER = logging.getLogger(__name__)
 
 
 class KidsCreditsManager:
-    """Owns the kid list and the append-only credit ledger for one config entry."""
+    """Owns the kid list, the append-only credit ledger, and pending/resolved
+    credit requests for one config entry."""
 
     def __init__(self, hass: HomeAssistant, entry_id: str) -> None:
         self.hass = hass
@@ -23,19 +40,27 @@ class KidsCreditsManager:
         self._store = KidsCreditsStore(hass, entry_id)
         self.kids: dict[str, Kid] = {}
         self.entries: list[LedgerEntry] = []
+        self.requests: list[CreditRequest] = []
 
     async def async_setup(self, initial_kid_names: list[str] | None = None) -> None:
-        kids, entries = await self._store.async_load()
+        kids, entries, requests = await self._store.async_load()
         if not kids and initial_kid_names:
             kids = [Kid(id=slugify_id(name), name=name, icon=DEFAULT_ICON) for name in initial_kid_names]
         self.kids = {k.id: k for k in kids}
         self.entries = entries
+        self.requests = requests
         if not kids:
             return
-        await self._store.async_save(list(self.kids.values()), self.entries)
+        await self._persist()
 
     async def async_unload(self) -> None:
         return None
+
+    async def _persist(self) -> None:
+        await self._store.async_save(list(self.kids.values()), self.entries, self.requests)
+
+    def _notify(self) -> None:
+        async_dispatcher_send(self.hass, f"{SIGNAL_UPDATED}_{self.entry_id}")
 
     def balance(self, kid_id: str) -> int:
         return sum(e.delta for e in self.entries if e.kid_id == kid_id)
@@ -51,11 +76,22 @@ class KidsCreditsManager:
         kid_entries.sort(key=lambda e: e.created_at, reverse=True)
         return kid_entries[:limit]
 
+    def requests_for(self, kid_id: str, limit: int = MAX_REQUESTS_PER_KID) -> list[CreditRequest]:
+        kid_requests = [r for r in self.requests if r.kid_id == kid_id]
+        kid_requests.sort(key=lambda r: r.created_at, reverse=True)
+        return kid_requests[:limit]
+
     def get_kid(self, kid_id: str) -> Kid:
         kid = self.kids.get(kid_id)
         if kid is None:
             raise ServiceValidationError(f"Unknown kid_id: {kid_id}")
         return kid
+
+    def get_request(self, request_id: str) -> CreditRequest:
+        for request in self.requests:
+            if request.id == request_id:
+                return request
+        raise ServiceValidationError(f"Unknown request_id: {request_id}")
 
     async def async_sync_kids(self, names: list[str]) -> None:
         """Reconcile the kid list against a plain list of names (from the options flow).
@@ -78,8 +114,8 @@ class KidsCreditsManager:
                 kid_id = slugify_id(name)
                 new_kids[kid_id] = Kid(id=kid_id, name=name, icon=DEFAULT_ICON)
         self.kids = new_kids
-        await self._store.async_save(list(self.kids.values()), self.entries)
-        async_dispatcher_send(self.hass, f"{SIGNAL_UPDATED}_{self.entry_id}")
+        await self._persist()
+        self._notify()
 
     async def async_add_entry(self, kid_id: str, delta: int, reason: str, category: str, actor: str | None) -> LedgerEntry:
         self.get_kid(kid_id)  # raises if unknown
@@ -87,8 +123,8 @@ class KidsCreditsManager:
             id=new_entry_id(), kid_id=kid_id, delta=delta, reason=reason, category=category, actor=actor
         )
         self.entries.append(entry)
-        await self._store.async_save(list(self.kids.values()), self.entries)
-        async_dispatcher_send(self.hass, f"{SIGNAL_UPDATED}_{self.entry_id}")
+        await self._persist()
+        self._notify()
         return entry
 
     async def async_award(self, kid_id: str, amount: int, reason: str, actor: str | None) -> LedgerEntry:
@@ -101,6 +137,14 @@ class KidsCreditsManager:
             raise ServiceValidationError("amount must be a positive number of credits")
         return await self.async_add_entry(kid_id, -amount, reason, "deduction", actor)
 
+    async def async_set_photo(self, kid_id: str, photo: str | None) -> None:
+        kid = self.get_kid(kid_id)
+        if photo and len(photo) > MAX_PHOTO_DATA_URI_LENGTH:
+            raise ServiceValidationError("Foto is te groot, kies een kleinere afbeelding")
+        kid.photo = photo or None
+        await self._persist()
+        self._notify()
+
     async def async_redeem(self, kid_id: str, amount: int, reason: str, actor: str | None) -> LedgerEntry:
         if amount <= 0:
             raise ServiceValidationError("amount must be a positive number of credits")
@@ -110,3 +154,45 @@ class KidsCreditsManager:
                 f"{kid.name} heeft maar {self.balance(kid_id)} credits, {amount} nodig voor deze beloning"
             )
         return await self.async_add_entry(kid_id, -amount, reason, "reward", actor)
+
+    async def async_request_credit(self, kid_id: str, reason: str) -> CreditRequest:
+        """A kid asks for credit for a task they say they completed. Creates a
+        pending request only - no credits change hands until a parent approves it."""
+        self.get_kid(kid_id)  # raises if unknown
+        request = CreditRequest(id=new_entry_id(), kid_id=kid_id, reason=reason)
+        self.requests.append(request)
+        await self._persist()
+        self._notify()
+        return request
+
+    async def async_approve_request(self, request_id: str, amount: int, actor: str | None) -> CreditRequest:
+        if amount <= 0:
+            raise ServiceValidationError("amount must be a positive number of credits")
+        request = self.get_request(request_id)
+        if request.status != STATUS_PENDING:
+            raise ServiceValidationError(f"Verzoek is al {request.status}")
+        self.get_kid(request.kid_id)  # raises if unknown
+        self.entries.append(
+            LedgerEntry(
+                id=new_entry_id(), kid_id=request.kid_id, delta=amount, reason=request.reason,
+                category="task", actor=actor,
+            )
+        )
+        request.status = STATUS_APPROVED
+        request.amount = amount
+        request.actor = actor
+        request.resolved_at = time.time()
+        await self._persist()
+        self._notify()
+        return request
+
+    async def async_reject_request(self, request_id: str, actor: str | None) -> CreditRequest:
+        request = self.get_request(request_id)
+        if request.status != STATUS_PENDING:
+            raise ServiceValidationError(f"Verzoek is al {request.status}")
+        request.status = STATUS_REJECTED
+        request.actor = actor
+        request.resolved_at = time.time()
+        await self._persist()
+        self._notify()
+        return request

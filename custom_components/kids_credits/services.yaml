@@ -57,6 +57,75 @@ deduct_points:
       selector:
         text:
 
+set_kid_photo:
+  name: Foto van kind instellen
+  description: Slaat een geüploade foto (of een leeg veld om terug te vallen op het icoon) op voor een kind.
+  fields:
+    kid_id:
+      name: Kind
+      required: true
+      selector:
+        text:
+    photo:
+      name: Foto
+      description: Een data: URI (base64) van de foto, of leeg om de foto te verwijderen.
+      required: false
+      selector:
+        text:
+
+request_credit:
+  name: Credits aanvragen
+  description: Een kind vraagt credits aan voor een klus die het gedaan zegt te hebben. Wijzigt het saldo nog niet - wacht op goedkeuring.
+  fields:
+    kid_id:
+      name: Kind
+      required: true
+      selector:
+        text:
+    reason:
+      name: Wat heb je gedaan?
+      required: true
+      selector:
+        text:
+
+approve_request:
+  name: Verzoek goedkeuren
+  description: Keurt een openstaand credit-verzoek goed en kent de credits toe.
+  fields:
+    request_id:
+      name: Verzoek
+      required: true
+      selector:
+        text:
+    amount:
+      name: Aantal credits
+      required: true
+      selector:
+        number:
+          min: 1
+          max: 50
+          mode: box
+    actor:
+      name: Goedgekeurd door
+      required: false
+      selector:
+        text:
+
+reject_request:
+  name: Verzoek afwijzen
+  description: Wijst een openstaand credit-verzoek af, zonder credits toe te kennen.
+  fields:
+    request_id:
+      name: Verzoek
+      required: true
+      selector:
+        text:
+    actor:
+      name: Afgewezen door
+      required: false
+      selector:
+        text:
+
 redeem_reward:
   name: Beloning verzilveren
   description: Trek credits af omdat een beloning is uitgekeerd (bv. bij 15 credits).

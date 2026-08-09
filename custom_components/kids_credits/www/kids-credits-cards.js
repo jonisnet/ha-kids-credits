@@ -1,31 +1,35 @@
 /**
  * Kids Credits cards
  * ------------------
- * Two self-contained (no build step, no external deps) Lovelace cards for
- * the Kids Credits integration:
+ * Four card types (two "real" cards, two matching visual editors) for the
+ * Kids Credits integration, no build step / no external deps:
  *
- *   - kids-credits-parent-card : award/deduct credits, task buttons, history.
- *                                Only put this on a dashboard parents see.
- *   - kids-credits-kids-card   : read-only balance + progress display, meant
- *                                for a shared kids tablet. Never calls a
- *                                service.
+ *   - kids-credits-parent-card : ONE kid, ONE parent per card instance
+ *     (config: kid_id, actor). Put 2 kids x 2 parents = 4 instances on
+ *     separate parent-only dashboards/views. Task/deduction/reward lists
+ *     open in a popup per credit-tier and are editable via the card's own
+ *     visual editor.
+ *   - kids-credits-kids-card   : read-only for balances/history, `kids:
+ *     [id, ...]` picks which kid(s) show on it (empty = all). Its one
+ *     exception to "never changes a balance" is `request_credit` - a kid
+ *     can ask for credit for a task, which only ever creates a PENDING
+ *     request; nothing about a kid's balance moves until a parent approves
+ *     it from their own parent-card. Meant for a shared kids tablet.
  *
- * Both auto-discover every `sensor.*` entity exposed by this integration by
- * duck-typing on the `kid_id` / `reward_threshold` attributes the backend
- * always sets (see custom_components/kids_credits/sensor.py) - no entity
- * list needs to be configured by hand.
+ * Both auto-discover kid sensors by duck-typing on the `kid_id` /
+ * `reward_threshold` attributes this integration's sensor.py always sets.
  *
- * Same `hass`-tick-suppression rule as the Life Events cards: `hass` is
- * reassigned on every state change anywhere in HA, so any card with a
- * persistent text input (the parent card's manual +/- reason field) must
- * skip re-rendering while that input has focus, or typing gets wiped
- * mid-keystroke. See PARENT_INPUT_SELECTOR / _safeRerender() below.
+ * hass-tick suppression: `hass` is reassigned on EVERY state change
+ * anywhere in HA. A full re-render while a popup is open would yank it
+ * out from under the user, and while an input has focus would wipe
+ * mid-keystroke typing - `_safeRerender()` on every stateful element here
+ * guards both by checking the live DOM before touching innerHTML.
  */
 (() => {
-  console.info("Kids Credits cards: v0.0.1 loaded");
+  console.info("Kids Credits cards: v0.2.0 loaded");
 
   const DOMAIN = "kids_credits";
-  const PARENT_INPUT_SELECTOR = "input, textarea";
+  const FOCUSABLE_INPUT_SELECTOR = "input, textarea, select";
 
   function css(strings, ...values) {
     return strings.reduce((acc, s, i) => acc + s + (values[i] ?? ""), "");
@@ -52,23 +56,80 @@
       .sort((a, b) => (a.attributes.friendly_name || "").localeCompare(b.attributes.friendly_name || ""));
   }
 
+  function getKidEntity(hass, kidId) {
+    return getKidEntities(hass).find((st) => st.attributes.kid_id === kidId);
+  }
+
+  function getNotifyServices(hass) {
+    return Object.keys((hass && hass.services && hass.services.notify) || {}).sort();
+  }
+
   function formatWhen(unixSeconds) {
     if (!unixSeconds) return "";
     const d = new Date(unixSeconds * 1000);
-    return d.toLocaleDateString("nl-NL", { day: "numeric", month: "short" }) + " " +
-      d.toLocaleTimeString("nl-NL", { hour: "2-digit", minute: "2-digit" });
+    return (
+      d.toLocaleDateString("nl-NL", { day: "numeric", month: "short" }) +
+      " " +
+      d.toLocaleTimeString("nl-NL", { hour: "2-digit", minute: "2-digit" })
+    );
   }
 
+  function renderAvatar(st, cssClass) {
+    const photo = st.attributes.photo;
+    const icon = st.attributes.icon || "mdi:account-child";
+    if (photo) return `<img class="${cssClass}" src="${escapeAttr(photo)}" alt="" />`;
+    return `<ha-icon class="${cssClass}" icon="${escapeAttr(icon)}"></ha-icon>`;
+  }
+
+  function statusBadge(status) {
+    if (status === "approved") return `<span class="kc-badge kc-badge-approved">✅ goedgekeurd</span>`;
+    if (status === "rejected") return `<span class="kc-badge kc-badge-rejected">❌ afgewezen</span>`;
+    return `<span class="kc-badge kc-badge-pending">⏳ in afwachting</span>`;
+  }
+
+  const REQUEST_STYLE = css`
+    .kc-badge { font-size: 0.75em; font-weight: 600; padding: 2px 8px; border-radius: 10px; white-space: nowrap; }
+    .kc-badge-pending { background: rgba(255, 167, 38, 0.18); color: #c47700; }
+    .kc-badge-approved { background: rgba(67, 160, 71, 0.18); color: var(--success-color, #43a047); }
+    .kc-badge-rejected { background: rgba(219, 68, 55, 0.18); color: var(--error-color, #db4437); }
+    .kc-request-row { padding: 8px 0; border-bottom: 1px solid var(--divider-color); }
+    .kc-request-row:last-child { border-bottom: none; }
+    .kc-request-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .kc-request-reason { font-size: 0.95em; }
+    .kc-request-meta { font-size: 0.8em; color: var(--secondary-text-color); margin-top: 2px; }
+    .kc-request-actions { display: flex; gap: 8px; align-items: center; margin-top: 6px; }
+    .kc-request-actions input[type="number"] {
+      width: 64px; padding: 6px; border-radius: 6px; border: 1px solid var(--divider-color);
+      background: var(--card-background-color); color: var(--primary-text-color);
+    }
+    .kc-approve-btn, .kc-reject-btn {
+      border: none; border-radius: 14px; padding: 6px 12px; font-size: 0.85em; cursor: pointer;
+    }
+    .kc-approve-btn { background: var(--success-color, #43a047); color: #fff; }
+    .kc-reject-btn { background: var(--secondary-background-color); color: var(--primary-text-color); }
+    .kc-request-form textarea {
+      width: 100%; min-height: 70px; padding: 8px; border-radius: 8px; border: 1px solid var(--divider-color);
+      background: var(--card-background-color); color: var(--primary-text-color); font-family: inherit; resize: vertical;
+      box-sizing: border-box;
+    }
+    .kc-request-submit {
+      margin-top: 10px; background: var(--primary-color); color: var(--text-primary-color, #fff);
+      border: none; border-radius: 16px; padding: 8px 16px; cursor: pointer; font-weight: 600;
+    }
+  `;
+
   // --------------------------------------------------------------------
-  // Task catalog - transcribed from the family's "zelfstandigheids
-  // beloningen" document. Point values for the 2/3/5-credit groups and
-  // the household rota (1 credit, the document's general default rule)
-  // come straight from the doc. The document does NOT specify how many
-  // credits to deduct for each misbehavior listed under "credits in
-  // mindering" - those default to 1 and are adjustable per-click via a
-  // stepper rather than silently guessing a fixed number.
+  // Default task catalog - transcribed from the family's "zelfstandigheids
+  // beloningen" document. Used whenever a card's own config doesn't define
+  // `groups` / `deductions` / `rewards` yet, so a freshly added card works
+  // out of the box; editing them via the visual editor overrides just that
+  // one card's config, it does not change the shared default.
+  //
+  // The document does NOT specify how many credits to deduct for each
+  // misbehavior - those default to 1 and get a stepper in the popup so the
+  // amount is adjustable per click rather than silently guessed.
   // --------------------------------------------------------------------
-  const TASK_GROUPS = [
+  const DEFAULT_GROUPS = [
     {
       points: 5,
       label: "5 credits",
@@ -117,7 +178,7 @@
     },
   ];
 
-  const DEDUCTIONS = [
+  const DEFAULT_DEDUCTIONS = [
     "Iemand geschopt, geslagen of gekrabd",
     "Bord/beker/glas/bestek na de maaltijd niet opgeruimd",
     "Schoenen niet netjes op de schoenentoren gezet",
@@ -125,15 +186,531 @@
     "Met deuren gegooid of iets kapotgemaakt uit boosheid",
   ];
 
+  function configGroups(config) {
+    return config.groups && config.groups.length ? config.groups : DEFAULT_GROUPS;
+  }
+  function configDeductions(config) {
+    return config.deductions && config.deductions.length ? config.deductions : DEFAULT_DEDUCTIONS;
+  }
+  function configRewards(config, kidState) {
+    if (config.rewards && config.rewards.length) return config.rewards;
+    const threshold = (kidState && kidState.attributes.reward_threshold) || 15;
+    return [{ label: `Beloning bij ${threshold} credits`, cost: threshold }];
+  }
+
   // --------------------------------------------------------------------
-  // Parent card
+  // Shared modal helper. Appends a backdrop as a DOM sibling (not part of
+  // the innerHTML template), so callers must guard their own _render()
+  // against wiping it - see FOCUSABLE_INPUT_SELECTOR / modal-open checks
+  // in each card's _safeRerender().
+  // --------------------------------------------------------------------
+  function showModal(shadowRoot, titleText, bodyHtml) {
+    hideModal(shadowRoot);
+    const backdrop = document.createElement("div");
+    backdrop.className = "kc-modal-backdrop";
+    backdrop.innerHTML = css`
+      <div class="kc-modal">
+        <div class="kc-modal-header">
+          <span>${escapeAttr(titleText)}</span>
+          <button class="kc-modal-close" data-action="close-modal">&times;</button>
+        </div>
+        <div class="kc-modal-body">${bodyHtml}</div>
+      </div>
+    `;
+    backdrop.addEventListener("click", (ev) => {
+      if (ev.target === backdrop) hideModal(shadowRoot);
+    });
+    backdrop.querySelector(".kc-modal-close").addEventListener("click", () => hideModal(shadowRoot));
+    shadowRoot.appendChild(backdrop);
+    return backdrop;
+  }
+
+  function hideModal(shadowRoot) {
+    const existing = shadowRoot.querySelector(".kc-modal-backdrop");
+    if (existing) existing.remove();
+  }
+
+  const MODAL_STYLE = css`
+    .kc-modal-backdrop {
+      position: fixed; inset: 0; background: rgba(0, 0, 0, 0.5);
+      display: flex; align-items: center; justify-content: center;
+      z-index: 10000; padding: 16px; box-sizing: border-box;
+    }
+    .kc-modal {
+      background: var(--card-background-color); color: var(--primary-text-color);
+      border-radius: 12px; max-width: 480px; width: 100%; max-height: 85vh;
+      display: flex; flex-direction: column; overflow: hidden;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+    }
+    .kc-modal-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 14px 16px; font-weight: 600; border-bottom: 1px solid var(--divider-color);
+    }
+    .kc-modal-close {
+      background: none; border: none; font-size: 1.4em; line-height: 1; cursor: pointer;
+      color: var(--secondary-text-color); padding: 0 4px;
+    }
+    .kc-modal-body { padding: 12px 16px; overflow-y: auto; }
+  `;
+
+  // --------------------------------------------------------------------
+  // Parent card - one kid, one parent (actor), per instance.
   // --------------------------------------------------------------------
   class KidsCreditsParentCard extends HTMLElement {
     constructor() {
       super();
       this.attachShadow({ mode: "open" });
       this._config = {};
-      this._deductAmount = {}; // per-kid-per-reason stepper state, keyed "kidId::reason"
+      this._deductAmount = {}; // per-reason stepper state, keyed by reason text
+    }
+
+    setConfig(config) {
+      // A missing kid_id (e.g. right after adding the card, before the
+      // editor's kid picker has a value yet) is handled by _render()
+      // itself, not here.
+      this._config = config || {};
+      this._render();
+    }
+
+    set hass(hass) {
+      this._hass = hass;
+      this._safeRerender();
+    }
+
+    get hass() {
+      return this._hass;
+    }
+
+    getCardSize() {
+      return 4;
+    }
+
+    static getStubConfig(hass) {
+      const kid = getKidEntities(hass)[0];
+      return { kid_id: kid ? kid.attributes.kid_id : "", actor: "papa" };
+    }
+
+    static getConfigElement() {
+      return document.createElement("kids-credits-parent-card-editor");
+    }
+
+    _safeRerender() {
+      if (!this.shadowRoot) return;
+      if (this.shadowRoot.querySelector(".kc-modal-backdrop")) return;
+      const active = this.shadowRoot.activeElement;
+      if (active && active.matches && active.matches(FOCUSABLE_INPUT_SELECTOR)) return;
+      this._render();
+    }
+
+    async _award(kidId, amount, reason) {
+      await callService(this._hass, "award_points", { kid_id: kidId, amount, reason, actor: this._config.actor || null });
+    }
+
+    async _deduct(kidId, amount, reason) {
+      await callService(this._hass, "deduct_points", { kid_id: kidId, amount, reason, actor: this._config.actor || null });
+    }
+
+    async _redeem(kidId, reward) {
+      await callService(this._hass, "redeem_reward", {
+        kid_id: kidId,
+        amount: reward.cost,
+        reason: reward.label,
+        actor: this._config.actor || null,
+      });
+      if (this._config.notify_service) {
+        const [notifyDomain, notifyService] = this._config.notify_service.split(".");
+        const kidName = (getKidEntity(this._hass, kidId) || {}).attributes?.friendly_name || kidId;
+        try {
+          await this._hass.callService(notifyDomain, notifyService, {
+            title: "Kids Credits",
+            message: `🎉 ${kidName} heeft "${reward.label}" verdiend!`,
+          });
+        } catch (err) {
+          console.warn("Kids Credits: notify service call failed", err);
+        }
+      }
+    }
+
+    async _manual(kidId, sign) {
+      const amountInput = this.shadowRoot.querySelector("#kc-manual-amount");
+      const reasonInput = this.shadowRoot.querySelector("#kc-manual-reason");
+      const amount = parseInt(amountInput.value, 10);
+      const reason = reasonInput.value.trim();
+      if (!amount || amount <= 0 || !reason) return;
+      if (sign > 0) await this._award(kidId, amount, reason);
+      else await this._deduct(kidId, amount, reason);
+      amountInput.value = "";
+      reasonInput.value = "";
+    }
+
+    async _uploadPhoto(kidId) {
+      const input = document.createElement("input");
+      input.type = "file";
+      input.accept = "image/*";
+      input.addEventListener("change", () => {
+        const file = input.files && input.files[0];
+        if (!file) return;
+        if (file.size > 300000) {
+          alert("Foto is te groot, kies een kleinere afbeelding (max ~300kB).");
+          return;
+        }
+        const reader = new FileReader();
+        reader.onload = async () => {
+          await callService(this._hass, "set_kid_photo", { kid_id: kidId, photo: reader.result });
+        };
+        reader.readAsDataURL(file);
+      });
+      input.click();
+    }
+
+    _openGroupModal(kidId, group) {
+      const body = group.tasks
+        .map(
+          (task) => css`
+            <button class="kc-modal-list-btn" data-action="award-modal" data-amount="${group.points}" data-reason="${escapeAttr(task)}">
+              <span class="kc-modal-list-amount">+${group.points}</span>
+              <span>${escapeAttr(task)}</span>
+            </button>
+          `
+        )
+        .join("");
+      const modal = showModal(this.shadowRoot, group.label, body || `<div class="kc-empty">Geen taken ingesteld</div>`);
+      modal.querySelectorAll('[data-action="award-modal"]').forEach((btn) => {
+        btn.addEventListener("click", async () => {
+          await this._award(kidId, parseInt(btn.dataset.amount, 10), btn.dataset.reason);
+          hideModal(this.shadowRoot);
+        });
+      });
+    }
+
+    _openDeductionsModal(kidId) {
+      this._renderDeductionsModalBody(kidId);
+    }
+
+    _renderDeductionsModalBody(kidId) {
+      const deductions = configDeductions(this._config);
+      const body = deductions.length
+        ? deductions
+            .map((reason) => {
+              const amount = this._deductAmount[reason] || 1;
+              return css`
+                <div class="kc-modal-deduct-row">
+                  <button class="kc-modal-list-btn kc-modal-deduct-apply" data-action="deduct-modal" data-reason="${escapeAttr(reason)}">
+                    <span class="kc-modal-list-amount kc-deduct-amount">&minus;${amount}</span>
+                    <span>${escapeAttr(reason)}</span>
+                  </button>
+                  <span class="kc-stepper">
+                    <button data-action="deduct-step-down" data-reason="${escapeAttr(reason)}">&minus;</button>
+                    <button data-action="deduct-step-up" data-reason="${escapeAttr(reason)}">+</button>
+                  </span>
+                </div>
+              `;
+            })
+            .join("")
+        : `<div class="kc-empty">Geen redenen ingesteld</div>`;
+
+      const modal = showModal(this.shadowRoot, "Credits in mindering", body);
+      modal.querySelectorAll('[data-action="deduct-modal"]').forEach((btn) => {
+        btn.addEventListener("click", async () => {
+          const reason = btn.dataset.reason;
+          const amount = this._deductAmount[reason] || 1;
+          await this._deduct(kidId, amount, reason);
+          hideModal(this.shadowRoot);
+        });
+      });
+      modal.querySelectorAll('[data-action="deduct-step-up"], [data-action="deduct-step-down"]').forEach((btn) => {
+        btn.addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          const reason = btn.dataset.reason;
+          const delta = btn.dataset.action === "deduct-step-up" ? 1 : -1;
+          const current = this._deductAmount[reason] || 1;
+          this._deductAmount[reason] = Math.max(1, Math.min(20, current + delta));
+          this._renderDeductionsModalBody(kidId);
+        });
+      });
+    }
+
+    _openRewardsModal(kidId, st) {
+      const rewards = configRewards(this._config, st);
+      const balance = Number(st.state) || 0;
+      const body = rewards
+        .map((reward) => {
+          const disabled = balance < reward.cost;
+          return css`
+            <button
+              class="kc-modal-list-btn kc-modal-reward-btn"
+              data-action="redeem-modal"
+              data-cost="${reward.cost}"
+              data-label="${escapeAttr(reward.label)}"
+              ${disabled ? "disabled" : ""}
+            >
+              <span class="kc-modal-list-amount">${reward.cost}</span>
+              <span>${escapeAttr(reward.label)}</span>
+            </button>
+          `;
+        })
+        .join("");
+      const modal = showModal(this.shadowRoot, "🎁 Beloning uitkeren", body || `<div class="kc-empty">Geen beloningen ingesteld</div>`);
+      modal.querySelectorAll('[data-action="redeem-modal"]').forEach((btn) => {
+        btn.addEventListener("click", async () => {
+          await this._redeem(kidId, { label: btn.dataset.label, cost: parseInt(btn.dataset.cost, 10) });
+          hideModal(this.shadowRoot);
+        });
+      });
+    }
+
+    _openHistoryModal(st) {
+      const history = st.attributes.history || [];
+      const body = history.length
+        ? history
+            .map(
+              (h) => css`
+                <div class="kc-history-row-full">
+                  <div class="kc-history-reason">${escapeAttr(h.reason)}</div>
+                  <div class="kc-history-meta">
+                    <span class="${h.delta > 0 ? "delta-pos" : "delta-neg"}">${h.delta > 0 ? "+" : ""}${h.delta}</span>
+                    <span>${formatWhen(h.created_at)}</span>
+                    <span>${h.actor ? "door " + escapeAttr(h.actor) : ""}</span>
+                  </div>
+                </div>
+              `
+            )
+            .join("")
+        : `<div class="kc-empty">Nog geen geschiedenis</div>`;
+      showModal(this.shadowRoot, `Geschiedenis van ${escapeAttr(st.attributes.friendly_name || "")}`, body);
+    }
+
+    _openRequestsModal(kidId, st) {
+      this._renderRequestsModalBody(kidId, st);
+    }
+
+    _renderRequestsModalBody(kidId, st) {
+      const pending = (st.attributes.requests || []).filter((r) => r.status === "pending");
+      const body = pending.length
+        ? pending
+            .map(
+              (r) => css`
+                <div class="kc-request-row">
+                  <div class="kc-request-reason">${escapeAttr(r.reason)}</div>
+                  <div class="kc-request-meta">${formatWhen(r.created_at)}</div>
+                  <div class="kc-request-actions">
+                    <input type="number" min="1" placeholder="credits" id="kc-req-amount-${escapeAttr(r.id)}" />
+                    <button class="kc-approve-btn" data-action="approve-request" data-request="${escapeAttr(r.id)}">Goedkeuren</button>
+                    <button class="kc-reject-btn" data-action="reject-request" data-request="${escapeAttr(r.id)}">Afwijzen</button>
+                  </div>
+                </div>
+              `
+            )
+            .join("")
+        : `<div class="kc-empty">Geen openstaande verzoeken</div>`;
+
+      const modal = showModal(this.shadowRoot, "Openstaande verzoeken", body);
+      modal.querySelectorAll('[data-action="approve-request"]').forEach((btn) => {
+        btn.addEventListener("click", async () => {
+          const requestId = btn.dataset.request;
+          const amountInput = modal.querySelector(`#kc-req-amount-${CSS.escape(requestId)}`);
+          const amount = parseInt(amountInput.value, 10);
+          if (!amount || amount <= 0) {
+            amountInput.focus();
+            return;
+          }
+          await callService(this._hass, "approve_request", {
+            request_id: requestId,
+            amount,
+            actor: this._config.actor || null,
+          });
+          this._renderRequestsModalBody(kidId, getKidEntity(this._hass, kidId) || st);
+        });
+      });
+      modal.querySelectorAll('[data-action="reject-request"]').forEach((btn) => {
+        btn.addEventListener("click", async () => {
+          await callService(this._hass, "reject_request", {
+            request_id: btn.dataset.request,
+            actor: this._config.actor || null,
+          });
+          this._renderRequestsModalBody(kidId, getKidEntity(this._hass, kidId) || st);
+        });
+      });
+    }
+
+    _render() {
+      if (!this.shadowRoot) return;
+      const hass = this._hass;
+      const kidId = this._config.kid_id;
+      const st = kidId ? getKidEntity(hass, kidId) : null;
+      const title = this._config.title;
+
+      if (!st) {
+        this.shadowRoot.innerHTML = css`
+          <ha-card ${title ? `header="${escapeAttr(title)}"` : ""}>
+            <div class="card-content">
+              <div class="kc-empty">
+                ${kidId
+                  ? `Geen kind gevonden met id "${escapeAttr(kidId)}". Is Kids Credits ingesteld?`
+                  : "Kies een kind via de kaart-editor."}
+              </div>
+            </div>
+          </ha-card>
+          <style>.kc-empty { color: var(--secondary-text-color); padding: 12px 0; }</style>
+        `;
+        return;
+      }
+
+      const name = st.attributes.friendly_name || kidId;
+      const balance = Number(st.state) || 0;
+      const threshold = st.attributes.reward_threshold || 15;
+      const pct = Math.max(0, Math.min(100, (balance / threshold) * 100));
+      const groups = configGroups(this._config);
+      const deductions = configDeductions(this._config);
+      const rewards = configRewards(this._config, st);
+      const canRedeemAny = rewards.some((r) => balance >= r.cost);
+      const pendingCount = (st.attributes.requests || []).filter((r) => r.status === "pending").length;
+
+      const chipsHtml = groups
+        .map(
+          (group) => css`
+            <button class="kc-chip" data-action="open-group" data-points="${group.points}">
+              +${group.points} · ${escapeAttr(group.label)} <span class="kc-chip-count">${group.tasks.length}</span>
+            </button>
+          `
+        )
+        .join("");
+
+      this.shadowRoot.innerHTML = css`
+        <style>
+          ${MODAL_STYLE}
+          ${REQUEST_STYLE}
+          ha-card { padding: 16px; }
+          .kc-header { display: flex; align-items: center; gap: 12px; margin-bottom: 4px; }
+          .kc-avatar-wrap { position: relative; flex-shrink: 0; }
+          .kc-avatar { width: 48px; height: 48px; border-radius: 50%; object-fit: cover; --mdc-icon-size: 48px; color: var(--primary-color); cursor: pointer; }
+          img.kc-avatar { background: var(--secondary-background-color); }
+          .kc-photo-btn {
+            position: absolute; bottom: -2px; right: -2px; width: 20px; height: 20px; border-radius: 50%;
+            background: var(--primary-color); color: var(--text-primary-color, #fff); border: 2px solid var(--card-background-color);
+            font-size: 0.7em; line-height: 1; cursor: pointer; display: flex; align-items: center; justify-content: center;
+          }
+          .kc-name-actor { flex: 1; min-width: 0; }
+          .kc-name { font-size: 1.15em; font-weight: 700; cursor: pointer; }
+          .kc-name:hover { text-decoration: underline; }
+          .kc-actor { font-size: 0.8em; color: var(--secondary-text-color); }
+          .kc-balance { font-size: 1.3em; font-weight: 700; color: var(--primary-color); white-space: nowrap; }
+          .kc-progress-wrap { height: 8px; border-radius: 4px; background: var(--divider-color); overflow: hidden; margin: 10px 0 14px; }
+          .kc-progress-bar { height: 100%; background: var(--primary-color); transition: width 0.3s ease; }
+          .kc-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+          .kc-chip {
+            border: 1px solid var(--divider-color); background: var(--card-background-color); color: var(--primary-text-color);
+            border-radius: 16px; padding: 6px 12px; font-size: 0.85em; cursor: pointer;
+          }
+          .kc-chip:hover { background: var(--secondary-background-color); }
+          .kc-chip-count { color: var(--secondary-text-color); }
+          .kc-chip-deduct { border-color: var(--error-color, #db4437); color: var(--error-color, #db4437); }
+          .kc-chip-reward { border-color: var(--primary-color); color: var(--primary-color); font-weight: 600; }
+          .kc-chip-reward:disabled, .kc-chip-reward[disabled] { opacity: 0.4; cursor: default; }
+          .kc-chip-pending { border-color: #c47700; color: #c47700; font-weight: 600; background: rgba(255, 167, 38, 0.12); }
+          .kc-manual-row { display: flex; gap: 6px; align-items: center; margin-top: 4px; flex-wrap: wrap; }
+          .kc-manual-row input[type="number"] { width: 60px; padding: 6px; border-radius: 6px; border: 1px solid var(--divider-color); background: var(--card-background-color); color: var(--primary-text-color); }
+          .kc-manual-row input[type="text"] { flex: 1; min-width: 120px; padding: 6px 8px; border-radius: 6px; border: 1px solid var(--divider-color); background: var(--card-background-color); color: var(--primary-text-color); }
+          .kc-manual-row button { border-radius: 50%; width: 32px; height: 32px; border: none; font-size: 1.1em; cursor: pointer; }
+          .kc-plus { background: var(--primary-color); color: var(--text-primary-color, #fff); }
+          .kc-minus { background: var(--error-color, #db4437); color: #fff; }
+          .kc-empty { color: var(--secondary-text-color); padding: 12px 0; }
+
+          .kc-modal-list-btn {
+            display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; padding: 10px 8px;
+            border: none; border-bottom: 1px solid var(--divider-color); background: none; color: var(--primary-text-color);
+            cursor: pointer; font-size: 0.95em;
+          }
+          .kc-modal-list-btn:last-child { border-bottom: none; }
+          .kc-modal-list-btn:hover:not([disabled]) { background: var(--secondary-background-color); }
+          .kc-modal-list-btn[disabled] { opacity: 0.4; cursor: default; }
+          .kc-modal-list-amount { font-weight: 700; color: var(--primary-color); min-width: 2.2em; }
+          .kc-modal-deduct-row { display: flex; align-items: center; border-bottom: 1px solid var(--divider-color); }
+          .kc-modal-deduct-row .kc-modal-list-btn { border-bottom: none; flex: 1; }
+          .kc-deduct-amount { color: var(--error-color, #db4437) !important; }
+          .kc-stepper { display: inline-flex; gap: 2px; padding-right: 8px; }
+          .kc-stepper button { width: 22px; height: 22px; border-radius: 50%; border: none; background: var(--secondary-background-color); color: var(--primary-text-color); cursor: pointer; }
+          .kc-history-row-full { padding: 8px 0; border-bottom: 1px solid var(--divider-color); }
+          .kc-history-row-full:last-child { border-bottom: none; }
+          .kc-history-reason { font-size: 0.95em; }
+          .kc-history-meta { display: flex; gap: 10px; font-size: 0.8em; color: var(--secondary-text-color); margin-top: 2px; }
+          .kc-history-meta .delta-pos { color: var(--success-color, #43a047); font-weight: 600; }
+          .kc-history-meta .delta-neg { color: var(--error-color, #db4437); font-weight: 600; }
+        </style>
+        <ha-card ${title ? `header="${escapeAttr(title)}"` : ""}>
+          <div class="card-content">
+            <div class="kc-header">
+              <div class="kc-avatar-wrap">
+                ${renderAvatar(st, "kc-avatar")}
+                <button class="kc-photo-btn" data-action="upload-photo" title="Foto wijzigen">📷</button>
+              </div>
+              <div class="kc-name-actor">
+                <div class="kc-name" data-action="open-history">${escapeAttr(name)}</div>
+                ${this._config.actor ? `<div class="kc-actor">ingevuld door ${escapeAttr(this._config.actor)}</div>` : ""}
+              </div>
+              <div class="kc-balance">${balance} credits</div>
+            </div>
+            <div class="kc-progress-wrap"><div class="kc-progress-bar" style="width:${pct}%"></div></div>
+
+            <div class="kc-chips">
+              <button class="kc-chip ${pendingCount ? "kc-chip-pending" : ""}" data-action="open-requests">📥 Verzoeken <span class="kc-chip-count">${pendingCount}</span></button>
+              ${chipsHtml}
+              <button class="kc-chip kc-chip-deduct" data-action="open-deductions">&minus; Credits in mindering <span class="kc-chip-count">${deductions.length}</span></button>
+              <button class="kc-chip kc-chip-reward" data-action="open-rewards" ${canRedeemAny ? "" : "disabled"}>🎁 Beloning uitkeren</button>
+            </div>
+
+            <div class="kc-manual-row">
+              <input type="number" id="kc-manual-amount" placeholder="aantal" min="1" />
+              <input type="text" id="kc-manual-reason" placeholder="reden" />
+              <button class="kc-plus" data-action="manual-plus" title="Toekennen">+</button>
+              <button class="kc-minus" data-action="manual-minus" title="Afnemen">&minus;</button>
+            </div>
+          </div>
+        </ha-card>
+      `;
+
+      this._bindEvents(kidId, st);
+    }
+
+    _bindEvents(kidId, st) {
+      const groups = configGroups(this._config);
+      this.shadowRoot.querySelectorAll("[data-action]").forEach((el) => {
+        const action = el.dataset.action;
+        el.addEventListener("click", async () => {
+          if (action === "open-group") {
+            const group = groups.find((g) => String(g.points) === el.dataset.points);
+            if (group) this._openGroupModal(kidId, group);
+          } else if (action === "open-requests") {
+            this._openRequestsModal(kidId, getKidEntity(this._hass, kidId) || st);
+          } else if (action === "open-deductions") {
+            this._openDeductionsModal(kidId);
+          } else if (action === "open-rewards") {
+            this._openRewardsModal(kidId, getKidEntity(this._hass, kidId) || st);
+          } else if (action === "open-history") {
+            this._openHistoryModal(getKidEntity(this._hass, kidId) || st);
+          } else if (action === "upload-photo") {
+            this._uploadPhoto(kidId);
+          } else if (action === "manual-plus") {
+            await this._manual(kidId, 1);
+          } else if (action === "manual-minus") {
+            await this._manual(kidId, -1);
+          }
+        });
+      });
+    }
+  }
+
+  // --------------------------------------------------------------------
+  // Kids card - read-only for balances/history; its only service call is
+  // request_credit, which never moves credits by itself (see the file-level
+  // doc comment above). Meant for a shared kids tablet. `kids` config picks
+  // which kid(s) show.
+  // --------------------------------------------------------------------
+  class KidsCreditsKidsCard extends HTMLElement {
+    constructor() {
+      super();
+      this.attachShadow({ mode: "open" });
+      this._config = {};
     }
 
     setConfig(config) {
@@ -151,317 +728,101 @@
     }
 
     getCardSize() {
-      return 6;
-    }
-
-    static getStubConfig() {
-      return { title: "Credits toekennen" };
-    }
-
-    _safeRerender() {
-      const active = this.shadowRoot && this.shadowRoot.activeElement;
-      if (active && active.matches && active.matches(PARENT_INPUT_SELECTOR)) return;
-      this._render();
-    }
-
-    _deductStep(kidId, reason, delta) {
-      const key = `${kidId}::${reason}`;
-      const current = this._deductAmount[key] || 1;
-      this._deductAmount[key] = Math.max(1, Math.min(20, current + delta));
-      this._render();
-    }
-
-    async _award(kidId, amount, reason) {
-      const actorInput = this.shadowRoot.querySelector("#kc-actor");
-      const actor = actorInput ? actorInput.value.trim() || null : null;
-      await callService(this._hass, "award_points", { kid_id: kidId, amount, reason, actor });
-    }
-
-    async _deduct(kidId, amount, reason) {
-      const actorInput = this.shadowRoot.querySelector("#kc-actor");
-      const actor = actorInput ? actorInput.value.trim() || null : null;
-      await callService(this._hass, "deduct_points", { kid_id: kidId, amount, reason, actor });
-    }
-
-    async _redeem(kidId, amount, threshold) {
-      const actorInput = this.shadowRoot.querySelector("#kc-actor");
-      const actor = actorInput ? actorInput.value.trim() || null : null;
-      await callService(this._hass, "redeem_reward", {
-        kid_id: kidId,
-        amount,
-        reason: `Beloning bij ${threshold} credits`,
-        actor,
-      });
-    }
-
-    async _manual(kidId, sign) {
-      const amountInput = this.shadowRoot.querySelector(`#kc-manual-amount-${kidId}`);
-      const reasonInput = this.shadowRoot.querySelector(`#kc-manual-reason-${kidId}`);
-      const amount = parseInt(amountInput.value, 10);
-      const reason = reasonInput.value.trim();
-      if (!amount || amount <= 0 || !reason) return;
-      if (sign > 0) await this._award(kidId, amount, reason);
-      else await this._deduct(kidId, amount, reason);
-      amountInput.value = "";
-      reasonInput.value = "";
-    }
-
-    _render() {
-      if (!this.shadowRoot) return;
-      const hass = this._hass;
-      const kids = getKidEntities(hass);
-      const title = this._config.title;
-
-      const kidsHtml = kids.length
-        ? kids.map((st) => this._renderKid(st)).join("")
-        : `<div class="kc-empty">Nog geen kinderen ingesteld. Voeg ze toe via Instellingen &gt; Apparaten &amp; diensten &gt; Kids Credits.</div>`;
-
-      this.shadowRoot.innerHTML = css`
-        <style>
-          ha-card { padding: 16px; }
-          .kc-actor-row { display: flex; align-items: center; gap: 8px; margin-bottom: 16px; }
-          .kc-actor-row label { font-size: 0.9em; color: var(--secondary-text-color); }
-          .kc-actor-row input {
-            flex: 1; max-width: 200px; padding: 6px 8px; border-radius: 6px;
-            border: 1px solid var(--divider-color); background: var(--card-background-color);
-            color: var(--primary-text-color);
-          }
-          .kc-kid { border-top: 1px solid var(--divider-color); padding-top: 16px; margin-top: 16px; }
-          .kc-kid:first-of-type { border-top: none; margin-top: 0; padding-top: 0; }
-          .kc-kid-header { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
-          .kc-kid-header ha-icon { color: var(--primary-color); }
-          .kc-kid-name { font-size: 1.15em; font-weight: 600; flex: 1; }
-          .kc-balance { font-size: 1.3em; font-weight: 700; color: var(--primary-color); }
-          .kc-progress-wrap { height: 8px; border-radius: 4px; background: var(--divider-color); overflow: hidden; margin-bottom: 12px; }
-          .kc-progress-bar { height: 100%; background: var(--primary-color); transition: width 0.3s ease; }
-          .kc-group { margin-bottom: 10px; }
-          .kc-group-label { font-size: 0.85em; color: var(--secondary-text-color); margin-bottom: 4px; }
-          .kc-buttons { display: flex; flex-wrap: wrap; gap: 6px; }
-          .kc-task-btn {
-            border: 1px solid var(--divider-color); background: var(--card-background-color);
-            color: var(--primary-text-color); border-radius: 16px; padding: 6px 12px;
-            font-size: 0.85em; cursor: pointer; text-align: left;
-          }
-          .kc-task-btn:hover { background: var(--secondary-background-color); }
-          .kc-deduct-btn {
-            border: 1px solid var(--error-color, #db4437); color: var(--error-color, #db4437);
-            background: var(--card-background-color); border-radius: 16px; padding: 4px 6px 4px 12px;
-            font-size: 0.85em; cursor: pointer; display: inline-flex; align-items: center; gap: 6px;
-          }
-          .kc-deduct-btn:hover { background: rgba(219, 68, 55, 0.08); }
-          .kc-stepper { display: inline-flex; align-items: center; gap: 2px; }
-          .kc-stepper button {
-            width: 20px; height: 20px; line-height: 1; border-radius: 50%; border: none;
-            background: var(--secondary-background-color); color: var(--primary-text-color); cursor: pointer;
-          }
-          .kc-manual-row { display: flex; gap: 6px; align-items: center; margin: 10px 0; flex-wrap: wrap; }
-          .kc-manual-row input[type="number"] { width: 60px; padding: 6px; border-radius: 6px; border: 1px solid var(--divider-color); background: var(--card-background-color); color: var(--primary-text-color); }
-          .kc-manual-row input[type="text"] { flex: 1; min-width: 140px; padding: 6px 8px; border-radius: 6px; border: 1px solid var(--divider-color); background: var(--card-background-color); color: var(--primary-text-color); }
-          .kc-manual-row button { border-radius: 50%; width: 32px; height: 32px; border: none; font-size: 1.1em; cursor: pointer; }
-          .kc-plus { background: var(--primary-color); color: var(--text-primary-color, #fff); }
-          .kc-minus { background: var(--error-color, #db4437); color: #fff; }
-          .kc-redeem-btn {
-            margin: 8px 0; padding: 8px 16px; border-radius: 20px; border: none;
-            background: var(--primary-color); color: var(--text-primary-color, #fff); cursor: pointer; font-weight: 600;
-          }
-          .kc-redeem-btn:disabled { opacity: 0.4; cursor: default; }
-          .kc-history { margin-top: 8px; }
-          .kc-history-row { font-size: 0.8em; color: var(--secondary-text-color); display: flex; justify-content: space-between; padding: 2px 0; }
-          .kc-history-row .delta-pos { color: var(--success-color, #43a047); font-weight: 600; }
-          .kc-history-row .delta-neg { color: var(--error-color, #db4437); font-weight: 600; }
-          .kc-empty { color: var(--secondary-text-color); padding: 12px 0; }
-          details summary { cursor: pointer; font-size: 0.85em; color: var(--secondary-text-color); }
-        </style>
-        <ha-card ${title ? `header="${escapeAttr(title)}"` : ""}>
-          <div class="card-content">
-            <div class="kc-actor-row">
-              <label for="kc-actor">Ingevuld door</label>
-              <input id="kc-actor" type="text" placeholder="papa / mama" />
-            </div>
-            ${kidsHtml}
-          </div>
-        </ha-card>
-      `;
-
-      this._bindEvents();
-    }
-
-    _renderKid(st) {
-      const kidId = st.attributes.kid_id;
-      const name = st.attributes.friendly_name || kidId;
-      const icon = st.attributes.icon || "mdi:account-child";
-      const balance = Number(st.state) || 0;
-      const threshold = st.attributes.reward_threshold || 15;
-      const pct = Math.max(0, Math.min(100, (balance / threshold) * 100));
-      const canRedeem = balance >= threshold;
-      const history = (st.attributes.history || []).slice(0, 5);
-
-      const groupsHtml = TASK_GROUPS.map(
-        (group) => css`
-          <div class="kc-group">
-            <div class="kc-group-label">${group.label}</div>
-            <div class="kc-buttons">
-              ${group.tasks
-                .map(
-                  (task) => css`
-                    <button
-                      class="kc-task-btn"
-                      data-action="award"
-                      data-kid="${escapeAttr(kidId)}"
-                      data-amount="${group.points}"
-                      data-reason="${escapeAttr(task)}"
-                    >+${group.points} · ${escapeAttr(task)}</button>
-                  `
-                )
-                .join("")}
-            </div>
-          </div>
-        `
-      ).join("");
-
-      const deductHtml = DEDUCTIONS.map((reason) => {
-        const key = `${kidId}::${reason}`;
-        const amount = this._deductAmount[key] || 1;
-        return css`
-          <div class="kc-deduct-btn">
-            <span
-              data-action="deduct"
-              data-kid="${escapeAttr(kidId)}"
-              data-amount="${amount}"
-              data-reason="${escapeAttr(reason)}"
-              style="cursor:pointer;"
-            >&minus;${amount} · ${escapeAttr(reason)}</span>
-            <span class="kc-stepper">
-              <button data-action="step-down" data-kid="${escapeAttr(kidId)}" data-reason="${escapeAttr(reason)}">&minus;</button>
-              <button data-action="step-up" data-kid="${escapeAttr(kidId)}" data-reason="${escapeAttr(reason)}">+</button>
-            </span>
-          </div>
-        `;
-      }).join("");
-
-      const historyHtml = history.length
-        ? history
-            .map(
-              (h) => css`
-                <div class="kc-history-row">
-                  <span>${escapeAttr(h.reason)}</span>
-                  <span class="${h.delta > 0 ? "delta-pos" : "delta-neg"}">${h.delta > 0 ? "+" : ""}${h.delta} · ${formatWhen(h.created_at)}</span>
-                </div>
-              `
-            )
-            .join("")
-        : `<div class="kc-history-row"><span>Nog geen geschiedenis</span></div>`;
-
-      return css`
-        <div class="kc-kid">
-          <div class="kc-kid-header">
-            <ha-icon icon="${escapeAttr(icon)}"></ha-icon>
-            <span class="kc-kid-name">${escapeAttr(name)}</span>
-            <span class="kc-balance">${balance} credits</span>
-          </div>
-          <div class="kc-progress-wrap"><div class="kc-progress-bar" style="width:${pct}%"></div></div>
-
-          ${groupsHtml}
-
-          <div class="kc-group">
-            <div class="kc-group-label">Credits in mindering</div>
-            <div class="kc-buttons">${deductHtml}</div>
-          </div>
-
-          <div class="kc-manual-row">
-            <input type="number" id="kc-manual-amount-${escapeAttr(kidId)}" placeholder="aantal" min="1" />
-            <input type="text" id="kc-manual-reason-${escapeAttr(kidId)}" placeholder="reden" />
-            <button class="kc-plus" data-action="manual-plus" data-kid="${escapeAttr(kidId)}" title="Toekennen">+</button>
-            <button class="kc-minus" data-action="manual-minus" data-kid="${escapeAttr(kidId)}" title="Afnemen">&minus;</button>
-          </div>
-
-          <button
-            class="kc-redeem-btn"
-            data-action="redeem"
-            data-kid="${escapeAttr(kidId)}"
-            data-amount="${threshold}"
-            data-threshold="${threshold}"
-            ${canRedeem ? "" : "disabled"}
-          >🎁 Beloning uitkeren (${threshold} credits)</button>
-
-          <details class="kc-history">
-            <summary>Recente geschiedenis</summary>
-            ${historyHtml}
-          </details>
-        </div>
-      `;
-    }
-
-    _bindEvents() {
-      this.shadowRoot.querySelectorAll("[data-action]").forEach((el) => {
-        el.addEventListener("click", async (ev) => {
-          const action = el.dataset.action;
-          const kidId = el.dataset.kid;
-          if (action === "award") {
-            await this._award(kidId, parseInt(el.dataset.amount, 10), el.dataset.reason);
-          } else if (action === "deduct") {
-            await this._deduct(kidId, parseInt(el.dataset.amount, 10), el.dataset.reason);
-          } else if (action === "step-up") {
-            this._deductStep(kidId, el.dataset.reason, 1);
-          } else if (action === "step-down") {
-            this._deductStep(kidId, el.dataset.reason, -1);
-          } else if (action === "manual-plus") {
-            await this._manual(kidId, 1);
-          } else if (action === "manual-minus") {
-            await this._manual(kidId, -1);
-          } else if (action === "redeem") {
-            await this._redeem(kidId, parseInt(el.dataset.amount, 10), el.dataset.threshold);
-          }
-        });
-      });
-    }
-  }
-
-  // --------------------------------------------------------------------
-  // Kids card - strictly read-only, no service calls, meant for a shared
-  // kids tablet dashboard.
-  // --------------------------------------------------------------------
-  class KidsCreditsKidsCard extends HTMLElement {
-    constructor() {
-      super();
-      this.attachShadow({ mode: "open" });
-      this._config = {};
-    }
-
-    setConfig(config) {
-      this._config = config || {};
-      this._render();
-    }
-
-    set hass(hass) {
-      this._hass = hass;
-      this._render();
-    }
-
-    get hass() {
-      return this._hass;
-    }
-
-    getCardSize() {
       return 4;
     }
 
     static getStubConfig() {
-      return { title: "Onze credits" };
+      return { title: "Onze credits", kids: [] };
+    }
+
+    static getConfigElement() {
+      return document.createElement("kids-credits-kids-card-editor");
+    }
+
+    _safeRerender() {
+      if (!this.shadowRoot) return;
+      if (this.shadowRoot.querySelector(".kc-modal-backdrop")) return;
+      this._render();
+    }
+
+    _openHistoryModal(st) {
+      const history = st.attributes.history || [];
+      const body = history.length
+        ? history
+            .map(
+              (h) => css`
+                <div class="kc-history-row-full">
+                  <div class="kc-history-reason">${escapeAttr(h.reason)}</div>
+                  <div class="kc-history-meta">
+                    <span class="${h.delta > 0 ? "delta-pos" : "delta-neg"}">${h.delta > 0 ? "+" : ""}${h.delta}</span>
+                    <span>${formatWhen(h.created_at)}</span>
+                    <span>${h.actor ? "door " + escapeAttr(h.actor) : ""}</span>
+                  </div>
+                </div>
+              `
+            )
+            .join("")
+        : `<div class="kc-empty">Nog geen geschiedenis</div>`;
+      showModal(this.shadowRoot, `Geschiedenis van ${escapeAttr(st.attributes.friendly_name || "")}`, body);
+    }
+
+    _openRequestFormModal(kidId) {
+      const body = css`
+        <div class="kc-request-form">
+          <textarea id="kc-request-reason" placeholder="Bijvoorbeeld: mijn kamer opgeruimd en gestofzuigd"></textarea>
+          <button class="kc-request-submit" data-action="submit-request">Verzoek versturen</button>
+        </div>
+      `;
+      const modal = showModal(this.shadowRoot, "Credits aanvragen", body);
+      modal.querySelector('[data-action="submit-request"]').addEventListener("click", async () => {
+        const textarea = modal.querySelector("#kc-request-reason");
+        const reason = textarea.value.trim();
+        if (!reason) return;
+        await callService(this._hass, "request_credit", { kid_id: kidId, reason });
+        hideModal(this.shadowRoot);
+      });
+    }
+
+    _openRequestsOverviewModal(st) {
+      const requests = st.attributes.requests || [];
+      const body = requests.length
+        ? requests
+            .map(
+              (r) => css`
+                <div class="kc-request-row">
+                  <div class="kc-request-top">
+                    <span class="kc-request-reason">${escapeAttr(r.reason)}</span>
+                    ${statusBadge(r.status)}
+                  </div>
+                  <div class="kc-request-meta">
+                    ${formatWhen(r.created_at)}
+                    ${r.status !== "pending" ? ` · ${r.status === "approved" ? "+" + r.amount + " credits" : ""}` : ""}
+                    ${r.actor ? ` · door ${escapeAttr(r.actor)}` : ""}
+                  </div>
+                </div>
+              `
+            )
+            .join("")
+        : `<div class="kc-empty">Nog geen verzoeken</div>`;
+      showModal(this.shadowRoot, `Verzoeken van ${escapeAttr(st.attributes.friendly_name || "")}`, body);
     }
 
     _render() {
       if (!this.shadowRoot) return;
       const hass = this._hass;
-      const kids = getKidEntities(hass);
+      const allKids = getKidEntities(hass);
+      const wanted = this._config.kids && this._config.kids.length ? this._config.kids : null;
+      const kids = wanted ? allKids.filter((st) => wanted.includes(st.attributes.kid_id)) : allKids;
       const title = this._config.title || "Onze credits";
 
       const kidsHtml = kids.length
         ? css`<div class="kc-grid">${kids.map((st) => this._renderKid(st)).join("")}</div>`
-        : `<div class="kc-empty">Nog geen kinderen ingesteld.</div>`;
+        : `<div class="kc-empty">Geen kinderen gekozen of gevonden.</div>`;
 
       this.shadowRoot.innerHTML = css`
         <style>
+          ${MODAL_STYLE}
+          ${REQUEST_STYLE}
           ha-card { padding: 20px; }
           .kc-title { font-size: 1.4em; font-weight: 700; margin-bottom: 16px; text-align: center; }
           .kc-grid { display: flex; gap: 20px; flex-wrap: wrap; justify-content: center; }
@@ -470,14 +831,29 @@
             background: var(--secondary-background-color); padding: 20px 16px;
           }
           .kc-kid-icon { --mdc-icon-size: 48px; color: var(--primary-color); }
-          .kc-kid-name { font-size: 1.2em; font-weight: 700; margin: 8px 0 4px; }
+          .kc-kid-icon, img.kc-kid-icon { width: 48px; height: 48px; border-radius: 50%; object-fit: cover; cursor: pointer; }
+          .kc-kid-name { font-size: 1.2em; font-weight: 700; margin: 8px 0 4px; cursor: pointer; }
+          .kc-kid-name:hover { text-decoration: underline; }
           .kc-kid-balance { font-size: 2.4em; font-weight: 800; color: var(--primary-color); line-height: 1; }
           .kc-kid-unit { font-size: 0.5em; font-weight: 500; color: var(--secondary-text-color); }
           .kc-progress-wrap { height: 14px; border-radius: 7px; background: var(--divider-color); overflow: hidden; margin: 12px 0 6px; }
           .kc-progress-bar { height: 100%; border-radius: 7px; background: linear-gradient(90deg, var(--primary-color), var(--success-color, #43a047)); transition: width 0.4s ease; }
           .kc-progress-label { font-size: 0.85em; color: var(--secondary-text-color); }
-          .kc-reward-ready { font-size: 0.95em; font-weight: 700; color: var(--success-color, #43a047); margin-top: 6px; }
           .kc-empty { color: var(--secondary-text-color); text-align: center; padding: 20px 0; }
+          .kc-history-row-full { padding: 8px 0; border-bottom: 1px solid var(--divider-color); text-align: left; }
+          .kc-history-row-full:last-child { border-bottom: none; }
+          .kc-history-reason { font-size: 0.95em; }
+          .kc-history-meta { display: flex; gap: 10px; font-size: 0.8em; color: var(--secondary-text-color); margin-top: 2px; }
+          .kc-history-meta .delta-pos { color: var(--success-color, #43a047); font-weight: 600; }
+          .kc-history-meta .delta-neg { color: var(--error-color, #db4437); font-weight: 600; }
+          .kc-request-btn {
+            display: block; width: 100%; margin-top: 12px; border: none; border-radius: 16px; padding: 8px 12px;
+            background: var(--primary-color); color: var(--text-primary-color, #fff); font-weight: 600; cursor: pointer;
+          }
+          .kc-requests-link {
+            display: block; margin-top: 6px; font-size: 0.8em; color: var(--secondary-text-color);
+            background: none; border: none; cursor: pointer; text-decoration: underline; padding: 0;
+          }
         </style>
         <ha-card>
           <div class="card-content">
@@ -486,37 +862,509 @@
           </div>
         </ha-card>
       `;
+
+      this.shadowRoot.querySelectorAll("[data-action='open-history']").forEach((el) => {
+        el.addEventListener("click", () => {
+          const st = kids.find((k) => k.attributes.kid_id === el.dataset.kid);
+          if (st) this._openHistoryModal(st);
+        });
+      });
+      this.shadowRoot.querySelectorAll("[data-action='request-credit']").forEach((el) => {
+        el.addEventListener("click", () => this._openRequestFormModal(el.dataset.kid));
+      });
+      this.shadowRoot.querySelectorAll("[data-action='open-requests']").forEach((el) => {
+        el.addEventListener("click", () => {
+          const st = kids.find((k) => k.attributes.kid_id === el.dataset.kid);
+          if (st) this._openRequestsOverviewModal(st);
+        });
+      });
     }
 
     _renderKid(st) {
       const name = st.attributes.friendly_name || st.attributes.kid_id;
-      const icon = st.attributes.icon || "mdi:account-child";
       const balance = Number(st.state) || 0;
       const threshold = st.attributes.reward_threshold || 15;
       const pct = Math.max(0, Math.min(100, (balance / threshold) * 100));
       const ready = balance >= threshold;
+      const kidId = escapeAttr(st.attributes.kid_id);
+      const requests = st.attributes.requests || [];
+      const pendingCount = requests.filter((r) => r.status === "pending").length;
 
       return css`
         <div class="kc-kid-tile">
-          <ha-icon class="kc-kid-icon" icon="${escapeAttr(icon)}"></ha-icon>
-          <div class="kc-kid-name">${escapeAttr(name)}</div>
+          <span data-action="open-history" data-kid="${kidId}">${renderAvatar(st, "kc-kid-icon")}</span>
+          <div class="kc-kid-name" data-action="open-history" data-kid="${kidId}">${escapeAttr(name)}</div>
           <div class="kc-kid-balance">${balance}<span class="kc-kid-unit"> credits</span></div>
           <div class="kc-progress-wrap"><div class="kc-progress-bar" style="width:${pct}%"></div></div>
           <div class="kc-progress-label">${ready ? "Beloning verdiend! 🎉" : `nog ${threshold - balance} tot een beloning`}</div>
+          <button class="kc-request-btn" data-action="request-credit" data-kid="${kidId}">✋ Ik heb een klus gedaan!</button>
+          <button class="kc-requests-link" data-action="open-requests" data-kid="${kidId}">
+            ${requests.length ? `${requests.length} verzoek${requests.length === 1 ? "" : "en"}${pendingCount ? ` (${pendingCount} in afwachting)` : ""}` : "Nog geen verzoeken"}
+          </button>
         </div>
       `;
     }
   }
 
+  // --------------------------------------------------------------------
+  // Shared editor helpers
+  // --------------------------------------------------------------------
+  const EDITOR_STYLE = css`
+    .kce-field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; }
+    .kce-field label { font-size: 0.85em; color: var(--secondary-text-color); }
+    .kce-field input[type="text"], .kce-field select, .kce-field input[type="number"] {
+      padding: 8px; border-radius: 6px; border: 1px solid var(--divider-color);
+      background: var(--card-background-color); color: var(--primary-text-color);
+    }
+    .kce-section {
+      border: 1px solid var(--divider-color); border-radius: 8px; margin-bottom: 12px; overflow: hidden;
+    }
+    .kce-section-header {
+      display: flex; align-items: center; justify-content: space-between; padding: 10px 12px;
+      background: var(--secondary-background-color); cursor: pointer; font-weight: 600;
+    }
+    .kce-section-header .kce-chevron { transition: transform 0.15s ease; }
+    .kce-section-header.kce-collapsed .kce-chevron { transform: rotate(-90deg); }
+    .kce-section-body { padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+    .kce-section-body.kce-hidden { display: none; }
+    .kce-group-box { border: 1px solid var(--divider-color); border-radius: 6px; padding: 10px; }
+    .kce-group-row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
+    .kce-group-row input[type="number"] { width: 70px; }
+    .kce-group-row input[type="text"] { flex: 1; }
+    .kce-task-row { display: flex; gap: 6px; align-items: center; margin-bottom: 6px; }
+    .kce-task-row input { flex: 1; padding: 6px 8px; border-radius: 6px; border: 1px solid var(--divider-color); background: var(--card-background-color); color: var(--primary-text-color); }
+    .kce-remove-btn {
+      width: 24px; height: 24px; border-radius: 50%; border: none; background: var(--error-color, #db4437);
+      color: #fff; cursor: pointer; flex-shrink: 0; line-height: 1;
+    }
+    .kce-add-btn {
+      align-self: flex-start; border: 1px dashed var(--divider-color); background: none; color: var(--primary-color);
+      border-radius: 6px; padding: 6px 10px; cursor: pointer; font-size: 0.9em;
+    }
+    .kce-remove-group-btn {
+      border: none; background: none; color: var(--error-color, #db4437); cursor: pointer; font-size: 0.85em;
+      margin-top: 4px;
+    }
+    .kce-reward-row { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; }
+    .kce-reward-row input[type="text"] { flex: 1; padding: 6px 8px; border-radius: 6px; border: 1px solid var(--divider-color); background: var(--card-background-color); color: var(--primary-text-color); }
+    .kce-reward-row input[type="number"] { width: 70px; padding: 6px 8px; border-radius: 6px; border: 1px solid var(--divider-color); background: var(--card-background-color); color: var(--primary-text-color); }
+  `;
+
+  function fireConfigChanged(el, config) {
+    el.dispatchEvent(new CustomEvent("config-changed", { detail: { config }, bubbles: true, composed: true }));
+  }
+
+  // --------------------------------------------------------------------
+  // Parent card editor
+  // --------------------------------------------------------------------
+  class KidsCreditsParentCardEditor extends HTMLElement {
+    constructor() {
+      super();
+      this.attachShadow({ mode: "open" });
+      this._config = {};
+      this._expanded = { deductions: false, rewards: false, groups: {} };
+    }
+
+    setConfig(config) {
+      this._config = { ...config };
+      this._render();
+    }
+
+    set hass(hass) {
+      this._hass = hass;
+      this._safeRerender();
+    }
+
+    get hass() {
+      return this._hass;
+    }
+
+    _safeRerender() {
+      if (!this.shadowRoot) return;
+      const active = this.shadowRoot.activeElement;
+      if (active && active.matches && active.matches(FOCUSABLE_INPUT_SELECTOR)) return;
+      this._render();
+    }
+
+    _update(patch) {
+      this._config = { ...this._config, ...patch };
+      fireConfigChanged(this, this._config);
+      this._render();
+    }
+
+    _updateGroups(groups) {
+      this._update({ groups });
+    }
+
+    _render() {
+      if (!this.shadowRoot) return;
+      const hass = this._hass;
+      const config = this._config;
+      const kids = getKidEntities(hass);
+      const notifyServices = getNotifyServices(hass);
+      const groups = configGroups(config);
+      const deductions = configDeductions(config);
+      const rewards = config.rewards && config.rewards.length ? config.rewards : [];
+
+      const kidOptions = kids
+        .map(
+          (st) =>
+            `<option value="${escapeAttr(st.attributes.kid_id)}" ${st.attributes.kid_id === config.kid_id ? "selected" : ""}>${escapeAttr(st.attributes.friendly_name)}</option>`
+        )
+        .join("");
+
+      const notifyOptions =
+        `<option value="">(geen)</option>` +
+        notifyServices
+          .map(
+            (svc) =>
+              `<option value="notify.${escapeAttr(svc)}" ${config.notify_service === "notify." + svc ? "selected" : ""}>notify.${escapeAttr(svc)}</option>`
+          )
+          .join("");
+
+      const groupsHtml = groups
+        .map((group, idx) => {
+          const expanded = !!this._expanded.groups[idx];
+          const tasksHtml = group.tasks
+            .map(
+              (task, taskIdx) => css`
+                <div class="kce-task-row">
+                  <input type="text" value="${escapeAttr(task)}" data-group="${idx}" data-task="${taskIdx}" data-field="task" />
+                  <button class="kce-remove-btn" data-action="remove-task" data-group="${idx}" data-task="${taskIdx}">&times;</button>
+                </div>
+              `
+            )
+            .join("");
+          return css`
+            <div class="kce-group-box">
+              <div class="kce-section-header ${expanded ? "" : "kce-collapsed"}" data-action="toggle-group" data-group="${idx}">
+                <span>${escapeAttr(group.label)} (${group.tasks.length})</span>
+                <span class="kce-chevron">▾</span>
+              </div>
+              ${expanded
+                ? css`
+                    <div class="kce-group-row">
+                      <input type="number" min="0" value="${group.points}" data-group="${idx}" data-field="points" title="Credits" />
+                      <input type="text" value="${escapeAttr(group.label)}" data-group="${idx}" data-field="label" placeholder="Naam van de groep" />
+                    </div>
+                    ${tasksHtml}
+                    <button class="kce-add-btn" data-action="add-task" data-group="${idx}">+ Taak toevoegen</button>
+                    <br />
+                    <button class="kce-remove-group-btn" data-action="remove-group" data-group="${idx}">Groep verwijderen</button>
+                  `
+                : ""}
+            </div>
+          `;
+        })
+        .join("");
+
+      const deductionsHtml = deductions
+        .map(
+          (reason, idx) => css`
+            <div class="kce-task-row">
+              <input type="text" value="${escapeAttr(reason)}" data-deduction="${idx}" />
+              <button class="kce-remove-btn" data-action="remove-deduction" data-deduction="${idx}">&times;</button>
+            </div>
+          `
+        )
+        .join("");
+
+      const rewardsHtml = rewards
+        .map(
+          (reward, idx) => css`
+            <div class="kce-reward-row">
+              <input type="text" value="${escapeAttr(reward.label)}" placeholder="Naam beloning" data-reward="${idx}" data-field="label" />
+              <input type="number" min="1" value="${reward.cost}" placeholder="Credits" data-reward="${idx}" data-field="cost" />
+              <button class="kce-remove-btn" data-action="remove-reward" data-reward="${idx}">&times;</button>
+            </div>
+          `
+        )
+        .join("");
+
+      this.shadowRoot.innerHTML = css`
+        <style>${EDITOR_STYLE}</style>
+        <div class="kce-field">
+          <label>Titel (optioneel)</label>
+          <input type="text" id="kce-title" value="${escapeAttr(config.title || "")}" />
+        </div>
+        <div class="kce-field">
+          <label>Kind</label>
+          <select id="kce-kid">${kidOptions || '<option value="">Geen kinderen gevonden</option>'}</select>
+        </div>
+        <div class="kce-field">
+          <label>Ouder (wie gebruikt deze kaart)</label>
+          <input type="text" id="kce-actor" value="${escapeAttr(config.actor || "")}" placeholder="papa / mama" />
+        </div>
+        <div class="kce-field">
+          <label>Pushbericht bij beloning (optioneel)</label>
+          <select id="kce-notify">${notifyOptions}</select>
+        </div>
+
+        <div class="kce-section">
+          <div class="kce-section-header" data-action="toggle-section" data-section="groups">
+            <span>Taken per aantal credits</span>
+            <span class="kce-chevron">▾</span>
+          </div>
+          <div class="kce-section-body">
+            ${groupsHtml}
+            <button class="kce-add-btn" data-action="add-group">+ Nieuwe groep</button>
+          </div>
+        </div>
+
+        <div class="kce-section">
+          <div class="kce-section-header ${this._expanded.deductions ? "" : "kce-collapsed"}" data-action="toggle-section" data-section="deductions">
+            <span>Credits in mindering (${deductions.length})</span>
+            <span class="kce-chevron">▾</span>
+          </div>
+          <div class="kce-section-body ${this._expanded.deductions ? "" : "kce-hidden"}">
+            ${deductionsHtml}
+            <button class="kce-add-btn" data-action="add-deduction">+ Reden toevoegen</button>
+          </div>
+        </div>
+
+        <div class="kce-section">
+          <div class="kce-section-header ${this._expanded.rewards ? "" : "kce-collapsed"}" data-action="toggle-section" data-section="rewards">
+            <span>Beloningen (${rewards.length || "standaard"})</span>
+            <span class="kce-chevron">▾</span>
+          </div>
+          <div class="kce-section-body ${this._expanded.rewards ? "" : "kce-hidden"}">
+            ${rewardsHtml}
+            <button class="kce-add-btn" data-action="add-reward">+ Beloning toevoegen</button>
+          </div>
+        </div>
+      `;
+
+      this._bind();
+    }
+
+    _bind() {
+      const root = this.shadowRoot;
+
+      root.querySelector("#kce-title").addEventListener("change", (e) => this._update({ title: e.target.value }));
+      root.querySelector("#kce-kid").addEventListener("change", (e) => this._update({ kid_id: e.target.value }));
+      root.querySelector("#kce-actor").addEventListener("change", (e) => this._update({ actor: e.target.value }));
+      root.querySelector("#kce-notify").addEventListener("change", (e) => this._update({ notify_service: e.target.value || undefined }));
+
+      root.querySelectorAll('[data-action="toggle-section"]').forEach((el) => {
+        el.addEventListener("click", () => {
+          const section = el.dataset.section;
+          this._expanded[section] = !this._expanded[section];
+          this._render();
+        });
+      });
+
+      root.querySelectorAll('[data-action="toggle-group"]').forEach((el) => {
+        el.addEventListener("click", () => {
+          const idx = el.dataset.group;
+          this._expanded.groups[idx] = !this._expanded.groups[idx];
+          this._render();
+        });
+      });
+
+      root.querySelectorAll('[data-field="points"], [data-field="label"]').forEach((el) => {
+        el.addEventListener("change", () => {
+          const groups = configGroups(this._config).map((g) => ({ ...g, tasks: [...g.tasks] }));
+          const idx = parseInt(el.dataset.group, 10);
+          if (el.dataset.field === "points") groups[idx].points = parseInt(el.value, 10) || 0;
+          else groups[idx].label = el.value;
+          this._updateGroups(groups);
+        });
+      });
+
+      root.querySelectorAll('[data-field="task"]').forEach((el) => {
+        el.addEventListener("change", () => {
+          const groups = configGroups(this._config).map((g) => ({ ...g, tasks: [...g.tasks] }));
+          groups[parseInt(el.dataset.group, 10)].tasks[parseInt(el.dataset.task, 10)] = el.value;
+          this._updateGroups(groups);
+        });
+      });
+
+      root.querySelectorAll('[data-action="add-task"]').forEach((el) => {
+        el.addEventListener("click", () => {
+          const groups = configGroups(this._config).map((g) => ({ ...g, tasks: [...g.tasks] }));
+          const idx = parseInt(el.dataset.group, 10);
+          groups[idx].tasks.push("Nieuwe taak");
+          this._expanded.groups[idx] = true;
+          this._updateGroups(groups);
+        });
+      });
+
+      root.querySelectorAll('[data-action="remove-task"]').forEach((el) => {
+        el.addEventListener("click", () => {
+          const groups = configGroups(this._config).map((g) => ({ ...g, tasks: [...g.tasks] }));
+          const gIdx = parseInt(el.dataset.group, 10);
+          groups[gIdx].tasks.splice(parseInt(el.dataset.task, 10), 1);
+          this._updateGroups(groups);
+        });
+      });
+
+      root.querySelector('[data-action="add-group"]').addEventListener("click", () => {
+        const groups = configGroups(this._config).map((g) => ({ ...g, tasks: [...g.tasks] }));
+        groups.push({ points: 1, label: "Nieuwe groep", tasks: [] });
+        this._expanded.groups[groups.length - 1] = true;
+        this._updateGroups(groups);
+      });
+
+      root.querySelectorAll('[data-action="remove-group"]').forEach((el) => {
+        el.addEventListener("click", () => {
+          const groups = configGroups(this._config).map((g) => ({ ...g, tasks: [...g.tasks] }));
+          groups.splice(parseInt(el.dataset.group, 10), 1);
+          this._updateGroups(groups);
+        });
+      });
+
+      root.querySelectorAll('input[data-deduction]').forEach((el) => {
+        el.addEventListener("change", () => {
+          const deductions = [...configDeductions(this._config)];
+          deductions[parseInt(el.dataset.deduction, 10)] = el.value;
+          this._update({ deductions });
+        });
+      });
+
+      root.querySelectorAll('[data-action="remove-deduction"]').forEach((el) => {
+        el.addEventListener("click", () => {
+          const deductions = [...configDeductions(this._config)];
+          deductions.splice(parseInt(el.dataset.deduction, 10), 1);
+          this._update({ deductions });
+        });
+      });
+
+      const addDeductionBtn = root.querySelector('[data-action="add-deduction"]');
+      if (addDeductionBtn) {
+        addDeductionBtn.addEventListener("click", () => {
+          const deductions = [...configDeductions(this._config), "Nieuwe reden"];
+          this._expanded.deductions = true;
+          this._update({ deductions });
+        });
+      }
+
+      root.querySelectorAll('[data-reward]').forEach((el) => {
+        el.addEventListener("change", () => {
+          const rewards = (this._config.rewards || []).map((r) => ({ ...r }));
+          const idx = parseInt(el.dataset.reward, 10);
+          if (el.dataset.field === "cost") rewards[idx].cost = parseInt(el.value, 10) || 0;
+          else rewards[idx].label = el.value;
+          this._update({ rewards });
+        });
+      });
+
+      root.querySelectorAll('[data-action="remove-reward"]').forEach((el) => {
+        el.addEventListener("click", () => {
+          const rewards = (this._config.rewards || []).map((r) => ({ ...r }));
+          rewards.splice(parseInt(el.dataset.reward, 10), 1);
+          this._update({ rewards });
+        });
+      });
+
+      const addRewardBtn = root.querySelector('[data-action="add-reward"]');
+      if (addRewardBtn) {
+        addRewardBtn.addEventListener("click", () => {
+          const rewards = [...(this._config.rewards || []), { label: "Nieuwe beloning", cost: 15 }];
+          this._expanded.rewards = true;
+          this._update({ rewards });
+        });
+      }
+    }
+  }
+
+  // --------------------------------------------------------------------
+  // Kids card editor
+  // --------------------------------------------------------------------
+  class KidsCreditsKidsCardEditor extends HTMLElement {
+    constructor() {
+      super();
+      this.attachShadow({ mode: "open" });
+      this._config = {};
+    }
+
+    setConfig(config) {
+      this._config = { ...config };
+      this._render();
+    }
+
+    set hass(hass) {
+      this._hass = hass;
+      this._safeRerender();
+    }
+
+    get hass() {
+      return this._hass;
+    }
+
+    _safeRerender() {
+      if (!this.shadowRoot) return;
+      const active = this.shadowRoot.activeElement;
+      if (active && active.matches && active.matches(FOCUSABLE_INPUT_SELECTOR)) return;
+      this._render();
+    }
+
+    _update(patch) {
+      this._config = { ...this._config, ...patch };
+      fireConfigChanged(this, this._config);
+      this._render();
+    }
+
+    _render() {
+      if (!this.shadowRoot) return;
+      const hass = this._hass;
+      const config = this._config;
+      const kids = getKidEntities(hass);
+      const selected = new Set(config.kids || []);
+
+      const checkboxesHtml = kids.length
+        ? kids
+            .map(
+              (st) => css`
+                <label class="kce-checkbox-row">
+                  <input type="checkbox" data-kid="${escapeAttr(st.attributes.kid_id)}" ${selected.has(st.attributes.kid_id) ? "checked" : ""} />
+                  ${escapeAttr(st.attributes.friendly_name)}
+                </label>
+              `
+            )
+            .join("")
+        : `<div class="kce-empty">Geen kinderen gevonden - stel Kids Credits eerst in.</div>`;
+
+      this.shadowRoot.innerHTML = css`
+        <style>
+          ${EDITOR_STYLE}
+          .kce-checkbox-row { display: flex; align-items: center; gap: 8px; padding: 6px 0; cursor: pointer; }
+          .kce-empty { color: var(--secondary-text-color); }
+          .kce-hint { font-size: 0.8em; color: var(--secondary-text-color); margin-top: 4px; }
+        </style>
+        <div class="kce-field">
+          <label>Titel</label>
+          <input type="text" id="kce-title" value="${escapeAttr(config.title || "")}" />
+        </div>
+        <div class="kce-field">
+          <label>Kinderen op deze kaart</label>
+          ${checkboxesHtml}
+          <div class="kce-hint">Niks aangevinkt = alle kinderen tonen.</div>
+        </div>
+      `;
+
+      const titleInput = this.shadowRoot.querySelector("#kce-title");
+      if (titleInput) titleInput.addEventListener("change", (e) => this._update({ title: e.target.value }));
+
+      this.shadowRoot.querySelectorAll("input[data-kid]").forEach((el) => {
+        el.addEventListener("change", () => {
+          const checked = Array.from(this.shadowRoot.querySelectorAll("input[data-kid]:checked")).map((c) => c.dataset.kid);
+          this._update({ kids: checked });
+        });
+      });
+    }
+  }
+
   customElements.define("kids-credits-parent-card", KidsCreditsParentCard);
   customElements.define("kids-credits-kids-card", KidsCreditsKidsCard);
+  customElements.define("kids-credits-parent-card-editor", KidsCreditsParentCardEditor);
+  customElements.define("kids-credits-kids-card-editor", KidsCreditsKidsCardEditor);
 
   window.customCards = window.customCards || [];
   window.customCards.push(
     {
       type: "kids-credits-parent-card",
-      name: "Kids Credits - Ouders",
-      description: "Ken credits toe of neem ze af, met knoppen per taak.",
+      name: "Kids Credits - Ouder",
+      description: "Een kaart voor één kind en één ouder: credits toekennen/afnemen, taken en beloningen.",
     },
     {
       type: "kids-credits-kids-card",

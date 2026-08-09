@@ -99,6 +99,77 @@ async def test_reward_available_attribute_flips_at_threshold(hass: HomeAssistant
     assert state.attributes["credits_until_reward"] == 0
 
 
+async def test_set_kid_photo_service_updates_the_sensor_attribute(hass: HomeAssistant):
+    await _setup_entry(hass)
+
+    await hass.services.async_call(
+        DOMAIN,
+        "set_kid_photo",
+        {"kid_id": "limanah", "photo": "data:image/png;base64,abcd"},
+        blocking=True,
+    )
+    await hass.async_block_till_done()
+
+    assert hass.states.get("sensor.limanah").attributes["photo"] == "data:image/png;base64,abcd"
+
+
+async def test_request_credit_service_shows_up_as_pending_on_the_sensor(hass: HomeAssistant):
+    await _setup_entry(hass)
+
+    await hass.services.async_call(
+        DOMAIN,
+        "request_credit",
+        {"kid_id": "limanah", "reason": "Kamer opgeruimd"},
+        blocking=True,
+    )
+    await hass.async_block_till_done()
+
+    requests = hass.states.get("sensor.limanah").attributes["requests"]
+    assert len(requests) == 1
+    assert requests[0]["status"] == "pending"
+    assert hass.states.get("sensor.limanah").state == "0"  # balance unchanged
+
+
+async def test_approve_request_service_awards_credits(hass: HomeAssistant):
+    await _setup_entry(hass)
+    await hass.services.async_call(
+        DOMAIN, "request_credit", {"kid_id": "limanah", "reason": "Kamer opgeruimd"}, blocking=True
+    )
+    await hass.async_block_till_done()
+    request_id = hass.states.get("sensor.limanah").attributes["requests"][0]["id"]
+
+    await hass.services.async_call(
+        DOMAIN,
+        "approve_request",
+        {"request_id": request_id, "amount": 3, "actor": "papa"},
+        blocking=True,
+    )
+    await hass.async_block_till_done()
+
+    state = hass.states.get("sensor.limanah")
+    assert state.state == "3"
+    assert state.attributes["requests"][0]["status"] == "approved"
+    assert state.attributes["history"][0]["reason"] == "Kamer opgeruimd"
+
+
+async def test_reject_request_service_leaves_balance_unchanged(hass: HomeAssistant):
+    await _setup_entry(hass)
+    await hass.services.async_call(
+        DOMAIN, "request_credit", {"kid_id": "aline", "reason": "Vaatwasser uitgeruimd"}, blocking=True
+    )
+    await hass.async_block_till_done()
+    request_id = hass.states.get("sensor.aline").attributes["requests"][0]["id"]
+
+    await hass.services.async_call(
+        DOMAIN, "reject_request", {"request_id": request_id, "actor": "mama"}, blocking=True
+    )
+    await hass.async_block_till_done()
+
+    state = hass.states.get("sensor.aline")
+    assert state.state == "0"
+    assert state.attributes["requests"][0]["status"] == "rejected"
+
+
 async def test_options_update_adds_a_new_kid_sensor(hass: HomeAssistant):
     entry = await _setup_entry(hass)
 
