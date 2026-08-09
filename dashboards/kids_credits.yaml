@@ -1,0 +1,23 @@
+# Example Lovelace configuration for Kids Credits.
+#
+# Put the "Ouders" view on a dashboard only you and your partner open
+# (e.g. your own phones), and the "Kinderen" view on the shared kitchen/
+# kids tablet. This is the enforcement mechanism for "only parents can
+# award or deduct credits" - the parent card is simply never shown on the
+# kids' dashboard.
+
+title: Kids Credits
+views:
+  - title: Ouders
+    path: ouders
+    icon: mdi:account-supervisor
+    cards:
+      - type: custom:kids-credits-parent-card
+        title: Credits toekennen
+
+  - title: Kinderen
+    path: kinderen
+    icon: mdi:emoticon-happy
+    cards:
+      - type: custom:kids-credits-kids-card
+        title: Onze credits

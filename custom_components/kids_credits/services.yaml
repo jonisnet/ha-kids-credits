@@ -1,0 +1,87 @@
+award_points:
+  name: Credits toekennen
+  description: Ken credits toe aan een kind voor een voltooide taak.
+  fields:
+    kid_id:
+      name: Kind
+      description: De id van het kind (zie het attribuut kid_id op zijn/haar sensor).
+      required: true
+      selector:
+        text:
+    amount:
+      name: Aantal credits
+      required: true
+      selector:
+        number:
+          min: 1
+          max: 50
+          mode: box
+    reason:
+      name: Reden
+      description: Welke taak of activiteit dit was.
+      required: true
+      selector:
+        text:
+    actor:
+      name: Toegekend door
+      description: Optioneel, wie dit heeft toegekend (papa/mama).
+      required: false
+      selector:
+        text:
+
+deduct_points:
+  name: Credits afnemen
+  description: Trek credits af bij een kind, bijvoorbeeld bij ongewenst gedrag.
+  fields:
+    kid_id:
+      name: Kind
+      required: true
+      selector:
+        text:
+    amount:
+      name: Aantal credits
+      required: true
+      selector:
+        number:
+          min: 1
+          max: 50
+          mode: box
+    reason:
+      name: Reden
+      required: true
+      selector:
+        text:
+    actor:
+      name: Afgeboekt door
+      required: false
+      selector:
+        text:
+
+redeem_reward:
+  name: Beloning verzilveren
+  description: Trek credits af omdat een beloning is uitgekeerd (bv. bij 15 credits).
+  fields:
+    kid_id:
+      name: Kind
+      required: true
+      selector:
+        text:
+    amount:
+      name: Aantal credits
+      required: true
+      selector:
+        number:
+          min: 1
+          max: 50
+          mode: box
+    reason:
+      name: Reden
+      description: Welke beloning is uitgekeerd.
+      required: true
+      selector:
+        text:
+    actor:
+      name: Uitgekeerd door
+      required: false
+      selector:
+        text:

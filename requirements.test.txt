@@ -1,0 +1,17 @@
+# linters such as flake8 and pylint should be pinned, as new releases
+# make new things fail. Manually update these pins when pulling in a
+# new version
+
+aioresponses==0.7.2
+codecov==2.1.13
+coverage>=6.4.4
+mypy==0.991
+pytest>=7.1.0
+pytest-cov>=3.0.0
+pytest-mock>=3.10
+pytest-homeassistant-custom-component==0.13.130
+typing-extensions>=4.6.3
+
+# pytest-homeassistant-custom-component pulls in homeassistant -> hass_nabucasa
+# -> acme, which still uses the josepy.ComparableX509 API removed in josepy 2.x.
+josepy<2

@@ -1,0 +1,28 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Kids Credits instellen",
+        "description": "Vul de namen van de kinderen in (komma-gescheiden) en bij hoeveel credits een beloning wordt uitgekeerd.",
+        "data": {
+          "kids": "Kinderen",
+          "reward_threshold": "Credits voor een beloning"
+        }
+      }
+    },
+    "abort": {
+      "single_instance_allowed": "Kids Credits kan maar één keer worden ingesteld."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Kids Credits aanpassen",
+        "data": {
+          "kids": "Kinderen",
+          "reward_threshold": "Credits voor een beloning"
+        }
+      }
+    }
+  }
+}

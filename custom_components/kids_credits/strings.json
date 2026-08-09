@@ -1,0 +1,28 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Set up Kids Credits",
+        "description": "Enter the kids' names (comma-separated) and how many credits are needed for a reward.",
+        "data": {
+          "kids": "Kids",
+          "reward_threshold": "Credits for a reward"
+        }
+      }
+    },
+    "abort": {
+      "single_instance_allowed": "Kids Credits can only be set up once."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Adjust Kids Credits",
+        "data": {
+          "kids": "Kids",
+          "reward_threshold": "Credits for a reward"
+        }
+      }
+    }
+  }
+}
