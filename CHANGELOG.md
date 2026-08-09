@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.0.7
+
+- **Fixed a real bug: the manual +/- toekenning on the parent card sometimes
+  silently did nothing**, even with a valid amount and reason typed in. A
+  background re-render (any hass state tick) replaces the whole card,
+  including the manual amount/reason inputs - if that happened in the gap
+  between finishing typing and tapping +/- (no input focused at that exact
+  moment, e.g. right after the on-screen keyboard closes), the fields were
+  silently wiped back to empty before the tap landed, so the resulting
+  click read empty values and did nothing. The typed amount/reason now
+  survive any number of re-renders, not just while an input has focus.
+- **The kids card's "wat heb je gedaan" request popup is now grouped per
+  credit amount** (one heading + row per tier, matching the parent card's
+  own task groups) instead of one flat grid, and each tile's caption now
+  sits below its icon instead of squeezed next to it. Rows are capped at 5
+  tiles wide so nothing gets uncomfortably small on a bigger screen.
+
 ## 0.0.6
 
 - **The card now registers itself as a real Lovelace resource** (the same

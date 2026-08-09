@@ -26,7 +26,7 @@
  * guards both by checking the live DOM before touching innerHTML.
  */
 (() => {
-  console.info("Kids Credits cards: v0.2.0 loaded");
+  console.info("Kids Credits cards loaded");
 
   const DOMAIN = "kids_credits";
   const FOCUSABLE_INPUT_SELECTOR = "input, textarea, select";
@@ -201,19 +201,20 @@
     .kc-request-group-label { font-size: 0.8em; font-weight: 700; color: var(--secondary-text-color); margin: 12px 0 2px; text-transform: uppercase; letter-spacing: 0.02em; }
     .kc-request-group-label:first-child { margin-top: 0; }
     .kc-icon-grid {
-      display: grid; grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); gap: 12px;
+      display: grid; grid-template-columns: repeat(auto-fill, minmax(max(84px, calc((100% - 48px) / 5)), 1fr)); gap: 12px;
       margin-bottom: 16px;
     }
     .kc-icon-tile {
       aspect-ratio: 1; border: none; border-radius: 20px; background: var(--secondary-background-color);
-      cursor: pointer; display: flex; align-items: center; justify-content: center;
-      transition: transform 0.1s ease, background 0.1s ease;
+      cursor: pointer; display: flex; flex-direction: column; align-items: center; justify-content: center;
+      gap: 4px; padding: 6px; transition: transform 0.1s ease, background 0.1s ease;
     }
     .kc-icon-tile:hover, .kc-icon-tile:active { background: var(--primary-color); }
     @media (prefers-reduced-motion: no-preference) {
       .kc-icon-tile:active { transform: scale(0.92); }
     }
-    .kc-icon-tile-emoji { font-size: 2.4em; line-height: 1; }
+    .kc-icon-tile-emoji { font-size: 2.1em; line-height: 1; }
+    .kc-icon-tile-caption { font-size: 0.72em; line-height: 1.15; text-align: center; color: var(--primary-text-color); }
     .kc-request-form textarea {
       width: 100%; min-height: 70px; padding: 8px; border-radius: 8px; border: 1px solid var(--divider-color);
       background: var(--card-background-color); color: var(--primary-text-color); font-family: inherit; resize: vertical;
@@ -389,6 +390,10 @@
       this.attachShadow({ mode: "open" });
       this._config = {};
       this._deductAmount = {}; // per-reason stepper state, keyed by reason text
+      // Manual amount/reason survive re-renders (see _doSafeRerender's
+      // focus guard for why this matters).
+      this._manualAmount = "";
+      this._manualReason = "";
     }
 
     setConfig(config) {
@@ -472,6 +477,8 @@
       else await this._deduct(kidId, amount, reason);
       amountInput.value = "";
       reasonInput.value = "";
+      this._manualAmount = "";
+      this._manualReason = "";
       // Without this, the input that was just typed into keeps DOM focus,
       // and _safeRerender()'s "don't wipe in-progress typing" guard then
       // also blocks the re-render that should show OUR OWN successful
@@ -781,8 +788,8 @@
             </div>
 
             <div class="kc-manual-row">
-              <input type="number" id="kc-manual-amount" placeholder="aantal" min="1" />
-              <input type="text" id="kc-manual-reason" placeholder="reden" />
+              <input type="number" id="kc-manual-amount" placeholder="aantal" min="1" value="${escapeAttr(this._manualAmount)}" />
+              <input type="text" id="kc-manual-reason" placeholder="reden" value="${escapeAttr(this._manualReason)}" />
               <button class="kc-plus" data-action="manual-plus" title="Toekennen">+</button>
               <button class="kc-minus" data-action="manual-minus" title="Afnemen">&minus;</button>
             </div>
@@ -795,6 +802,15 @@
 
     _bindEvents(kidId, st) {
       const groups = configGroups(this._config);
+      const amountInput = this.shadowRoot.querySelector("#kc-manual-amount");
+      const reasonInput = this.shadowRoot.querySelector("#kc-manual-reason");
+      // Kept on the instance (not just the DOM) so a re-render that lands in
+      // the gap between typing and tapping +/- (e.g. right after the
+      // on-screen keyboard closes, no input focused) restores what was
+      // typed instead of silently wiping it - see _doSafeRerender's focus
+      // guard, which only protects values while an input is still focused.
+      if (amountInput) amountInput.addEventListener("input", () => { this._manualAmount = amountInput.value; });
+      if (reasonInput) reasonInput.addEventListener("input", () => { this._manualReason = reasonInput.value; });
       this.shadowRoot.querySelectorAll("[data-action]").forEach((el) => {
         const action = el.dataset.action;
         el.addEventListener("click", async () => {
@@ -900,29 +916,35 @@
       // one goes to a confirm step showing the full description before
       // anything is actually sent. Falls back to free text for anything not
       // pictured.
-      const allTasks = configGroups(this._config).flatMap((group) =>
-        group.tasks.map(normalizeTask).map((task) => ({ ...task, points: group.points }))
-      );
-
-      const tilesHtml = allTasks
-        .map(
-          (task) => css`
-            <button
-              class="kc-icon-tile"
-              data-action="pick-task-request"
-              data-amount="${task.points}"
-              data-icon="${escapeAttr(task.icon)}"
-              data-reason="${escapeAttr(task.label)}"
-            >
-              <span class="kc-icon-tile-emoji">${escapeAttr(task.icon)}</span>
-              <span class="kc-icon-tile-caption">${escapeAttr(task.short)}</span>
-            </button>
-          `
-        )
+      const groupsHtml = configGroups(this._config)
+        .map((group) => {
+          const tiles = group.tasks
+            .map(normalizeTask)
+            .map(
+              (task) => css`
+                <button
+                  class="kc-icon-tile"
+                  data-action="pick-task-request"
+                  data-amount="${group.points}"
+                  data-icon="${escapeAttr(task.icon)}"
+                  data-reason="${escapeAttr(task.label)}"
+                >
+                  <span class="kc-icon-tile-emoji">${escapeAttr(task.icon)}</span>
+                  <span class="kc-icon-tile-caption">${escapeAttr(task.short)}</span>
+                </button>
+              `
+            )
+            .join("");
+          if (!tiles) return "";
+          return css`
+            <div class="kc-request-group-label">${escapeAttr(group.label)}</div>
+            <div class="kc-icon-grid">${tiles}</div>
+          `;
+        })
         .join("");
 
       const body = css`
-        <div class="kc-icon-grid">${tilesHtml}</div>
+        ${groupsHtml}
         <div class="kc-request-form">
           <div class="kc-request-group-label">Iets anders</div>
           <textarea id="kc-request-reason" placeholder="Typ hier wat je hebt gedaan"></textarea>
