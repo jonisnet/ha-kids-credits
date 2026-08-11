@@ -66,6 +66,13 @@ class KidsCreditsEntity(Entity):
 
     should_poll = False
     _attr_has_entity_name = False
+    # photo/history/requests can comfortably exceed the Recorder's 16KB
+    # per-state attributes limit (a photo alone can be tens of KB) - they're
+    # only ever read live off hass.states by our own cards, never off
+    # Recorder-stored history, so excluding them from what gets persisted
+    # avoids the "attributes will not be stored" warning without changing
+    # anything the cards actually see.
+    _unrecorded_attributes = frozenset({"photo", "history", "requests"})
 
     def __init__(self, manager: KidsCreditsManager, entry: ConfigEntry, kid: Kid) -> None:
         self._manager = manager

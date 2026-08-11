@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.1.6
+
+Found by reading the actual Home Assistant Core log (not something a user
+would normally report, since neither one broke the cards):
+
+- **Fixed a YAML syntax error in `services.yaml`** ("mapping values are not
+  allowed here", line 71) - the `set_kid_photo` service's `photo` field
+  description contained `data: URI` unquoted, and YAML read the `:` as a
+  nested mapping key. Quoted the string. This only affected the
+  description shown in Developer Tools > Services, not the service itself.
+- **Fixed "State attributes ... exceed maximum size of 16384 bytes"** for
+  every kid entity - `photo`, `history`, and `requests` together can
+  comfortably exceed the Recorder's 16KB limit (a single photo alone can
+  be tens of KB), and once they do, that state's attributes silently stop
+  being stored at all. These are excluded from what the Recorder persists
+  via `_unrecorded_attributes` (a real HA Entity API, not a workaround) -
+  the cards keep working exactly the same since they always read the
+  entity live off `hass.states`, never off Recorder-stored history.
+
 ## 0.1.5
 
 - **Fixed the real root cause behind "I sometimes need to tap a button

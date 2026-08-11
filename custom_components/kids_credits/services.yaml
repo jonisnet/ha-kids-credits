@@ -68,7 +68,7 @@ set_kid_photo:
         text:
     photo:
       name: Foto
-      description: Een data: URI (base64) van de foto, of leeg om de foto te verwijderen.
+      description: "Een data: URI (base64) van de foto, of leeg om de foto te verwijderen."
       required: false
       selector:
         text:
