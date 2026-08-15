@@ -4,9 +4,10 @@
     "documentation": "https://github.com/jonisnet/ha-kids-credits",
     "issue_tracker": "https://github.com/jonisnet/ha-kids-credits/issues",
     "dependencies": [],
+    "after_dependencies": ["lovelace"],
     "codeowners": ["@jonisnet"],
     "requirements": [],
     "config_flow": true,
     "iot_class": "local_push",
-    "version": "0.1.6"
+    "version": "0.1.7"
 }

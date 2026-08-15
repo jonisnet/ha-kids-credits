@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.1.7
+
+- **Fixed the card sometimes needing a hard refresh after a Home Assistant
+  restart to load at all.** `manifest.json` didn't declare `lovelace` as an
+  `after_dependencies` entry, so on some restarts this integration could
+  finish its own setup before Lovelace had loaded its resources storage -
+  when that happened, registration silently fell back to the older
+  `add_extra_js_url` injection method, which is the exact mechanism known
+  to get "stuck" until a manual hard refresh. Declaring the dependency
+  makes the reliable real-Lovelace-resource registration path win
+  consistently instead of depending on restart timing.
+
 ## 0.1.6
 
 Found by reading the actual Home Assistant Core log (not something a user
