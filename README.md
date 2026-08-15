@@ -1,5 +1,6 @@
 # Kids Credits
 
+[![Sponsor](https://img.shields.io/badge/sponsor-ea4aaa?style=flat-square&logo=githubsponsors&logoColor=white)](https://github.com/sponsors/jonisnet)
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-FFDD00?style=flat-square&logo=buy-me-a-coffee&logoColor=black)](https://www.buymeacoffee.com/jonisnet)
 
 A simple family chore/reward credit system for Home Assistant. Parents award
@@ -230,3 +231,12 @@ to be typed by hand.
 `kid_id` is the slugified name shown in each entity's `kid_id` attribute
 (e.g. `limanah`). These are what the cards call under the hood; you can also
 call them directly from automations/scripts.
+
+---
+
+## Sponsor
+
+This integration is free and maintained in my spare time. If it's useful to you, a small contribution is very welcome and appreciated:
+
+[![Sponsor on GitHub](https://img.shields.io/badge/Sponsor-ea4aaa?style=for-the-badge&logo=githubsponsors&logoColor=white)](https://github.com/sponsors/jonisnet)
+[![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-FFDD00?style=for-the-badge&logo=buy-me-a-coffee&logoColor=black)](https://www.buymeacoffee.com/jonisnet)
