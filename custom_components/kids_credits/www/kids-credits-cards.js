@@ -28,6 +28,44 @@
 (() => {
   console.info("Kids Credits cards loaded");
 
+  // HA's frontend installs a scoped-custom-element-registry polyfill during boot, replacing
+  // window.customElements. When this resource module evaluates before that swap (a cold-load
+  // eval-order race - DevTools being open changes timing enough to hide it locally), our
+  // elements register into the *native* registry, which the polyfill's get()/whenDefined() then
+  // never sees: every card renders "Configuration error: Custom element doesn't exist"
+  // (home-assistant/frontend#52960). A normal F5 doesn't reliably dodge the race (same cache/
+  // eval-order conditions can repeat); Ctrl+Shift+R often "fixes" it only because bypassing the
+  // cache happens to shift the timing, not because it addresses the actual cause.
+  //
+  // Fix (community-diagnosed and verified fix for this exact HA regression, upstream issue
+  // above): define immediately as before, then re-verify once whenDefined('home-assistant')
+  // resolves on the registry we loaded against - HA installs the polyfill before defining its
+  // own elements, and the polyfill's own defines land back on the native registry for the
+  // browser to actually upgrade anything, so this signal reliably resolves after the danger
+  // zone on both sides of the race. A 5s fallback timer covers the (unexpected) case where that
+  // signal itself doesn't fire. Reference implementation: benct/lovelace-multiple-entity-row
+  // src/lib/define.js (MIT, adapted here).
+  const DEFINE_FALLBACK_DELAY_MS = 5000;
+
+  function _healElementDefine(name, ctor, via) {
+    if (customElements.get(name)) return;
+    try {
+      customElements.define(name, ctor);
+      console.info(`Kids Credits: re-defined ${name} after customElements registry swap, caught by ${via} (frontend#52960)`);
+    } catch (e) {
+      console.warn(`Kids Credits: re-defining ${name} after registry swap failed (${via})`, e);
+    }
+  }
+
+  function defineElement(name, ctor) {
+    const registryAtLoad = customElements;
+    if (!registryAtLoad.get(name)) {
+      registryAtLoad.define(name, ctor);
+    }
+    registryAtLoad.whenDefined("home-assistant").then(() => _healElementDefine(name, ctor, "ha-boot signal"));
+    setTimeout(() => _healElementDefine(name, ctor, "fallback timer"), DEFINE_FALLBACK_DELAY_MS);
+  }
+
   const DOMAIN = "kids_credits";
   const FOCUSABLE_INPUT_SELECTOR = "input, textarea, select";
 
@@ -2138,12 +2176,12 @@
     }
   }
 
-  customElements.define("kids-credits-parent-card", KidsCreditsParentCard);
-  customElements.define("kids-credits-kids-card", KidsCreditsKidsCard);
-  customElements.define("kids-credits-parent-card-editor", KidsCreditsParentCardEditor);
-  customElements.define("kids-credits-kids-card-editor", KidsCreditsKidsCardEditor);
-  customElements.define("kids-credits-rules-card", KidsCreditsRulesCard);
-  customElements.define("kids-credits-rules-card-editor", KidsCreditsRulesCardEditor);
+  defineElement("kids-credits-parent-card", KidsCreditsParentCard);
+  defineElement("kids-credits-kids-card", KidsCreditsKidsCard);
+  defineElement("kids-credits-parent-card-editor", KidsCreditsParentCardEditor);
+  defineElement("kids-credits-kids-card-editor", KidsCreditsKidsCardEditor);
+  defineElement("kids-credits-rules-card", KidsCreditsRulesCard);
+  defineElement("kids-credits-rules-card-editor", KidsCreditsRulesCardEditor);
 
   window.customCards = window.customCards || [];
   window.customCards.push(

@@ -116,6 +116,7 @@ async def _async_register_frontend(hass: HomeAssistant) -> None:
             from homeassistant.components.frontend import add_extra_js_url
 
             add_extra_js_url(hass, js_url)
+            _LOGGER.debug("Registered %s via add_extra_js_url fallback", js_url)
         except ImportError:
             pass
 

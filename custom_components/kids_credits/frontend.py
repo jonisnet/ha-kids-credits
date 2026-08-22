@@ -17,10 +17,27 @@ the resource-editing UI calls). This touches `hass.data["lovelace"]`, which
 is an internal object, not a documented `homeassistant.helpers` API -
 there's no dedicated public API for a third-party integration to do this.
 If anything about its shape doesn't match what's expected (a future
-HA-core change, YAML-mode dashboards, or Lovelace not having finished
-loading yet at startup), this fails soft and the caller falls back to the
-always-works add_extra_js_url injection - never a crash, just the previous
-(still-functional) behavior.
+HA-core change, or YAML-mode dashboards), this fails soft and the caller
+falls back to the add_extra_js_url injection - never a crash, just a less
+reliable fallback (see _async_register_frontend's docstring for why it's
+less reliable).
+
+Historical note - a real bug this docstring used to describe as intended
+behavior: this class used to check `lovelace.mode` (no such attribute -
+current HA core's `LovelaceData` dataclass calls it `resource_mode`) and
+bail out whenever `lovelace.resources.loaded` was still False, deliberately,
+"to not block config entry setup". Both were wrong. The attribute typo
+meant every single call raised AttributeError and silently fell back to
+add_extra_js_url, unconditionally - not "rarely, early in startup" as the
+old comment claimed, but always. And the `.loaded` pre-check was solving a
+problem `ResourceStorageCollection` already solves better itself:
+`async_create_item`/`async_update_item` call `_async_ensure_loaded()`
+internally and await the real load before doing anything, so bailing out
+"because it might not be loaded yet" only threw away a case the library
+already handled safely. Fixed by using the real attribute name and calling
+`_async_ensure_loaded()` ourselves before reading `async_items()` (see
+below for why that specific read needs it too), instead of pre-emptively
+giving up.
 
 Deliberately does not delete the resource entry on unload/uninstall - that
 would need to distinguish a reload from a real removal (a plain
@@ -81,13 +98,14 @@ class LovelaceResourceRegistration:
         raises) if the caller should fall back to add_extra_js_url instead."""
         lovelace = self.hass.data.get("lovelace")
         if lovelace is None:
+            _LOGGER.debug("Lovelace resource registration: lovelace not set up yet")
             return False
         try:
-            if lovelace.mode != "storage":
-                return False
-            if not lovelace.resources.loaded:
-                # Rare (very early in startup) - don't block config entry
-                # setup waiting for it. The fallback covers this session.
+            if lovelace.resource_mode != "storage":
+                _LOGGER.debug(
+                    "Lovelace resource registration: dashboard is in %s mode, not storage",
+                    lovelace.resource_mode,
+                )
                 return False
             await self._async_create_or_update(lovelace, version)
             return True
@@ -96,10 +114,28 @@ class LovelaceResourceRegistration:
             return False
 
     async def _async_create_or_update(self, lovelace, version: str) -> None:
+        resources = lovelace.resources
+        # async_create_item/async_update_item below both call this internally before touching
+        # storage, so calling it isn't strictly required for *them* - it's needed here so the
+        # async_items() read on the next line sees real data instead of an empty pre-load
+        # cache. Skipping it meant a startup-timed call could see "no existing resource" (data
+        # not loaded yet) and create a duplicate entry instead of finding and updating the real
+        # one. `_async_ensure_loaded` is the same idempotent guard HA core's own
+        # ResourceStorageCollection.async_get_info() uses for this; getattr guards against a
+        # future core version renaming/removing it, in which case we just skip straight to the
+        # create/update call below, which still self-loads safely either way.
+        ensure_loaded = getattr(resources, "_async_ensure_loaded", None)
+        if ensure_loaded is not None:
+            await ensure_loaded()
+
         url = f"{self._js_path}?v={version}"
-        existing = [r for r in lovelace.resources.async_items() if r["url"].split("?")[0] == self._js_path]
+        existing = [r for r in resources.async_items() if r["url"].split("?")[0] == self._js_path]
         if existing:
             if existing[0]["url"] != url:
-                await lovelace.resources.async_update_item(existing[0]["id"], {"res_type": RESOURCE_TYPE, "url": url})
+                _LOGGER.debug("Updating Lovelace resource: %s -> %s", existing[0]["url"], url)
+                await resources.async_update_item(existing[0]["id"], {"res_type": RESOURCE_TYPE, "url": url})
+            else:
+                _LOGGER.debug("Lovelace resource already current: %s", url)
         else:
-            await lovelace.resources.async_create_item({"res_type": RESOURCE_TYPE, "url": url})
+            _LOGGER.debug("Creating Lovelace resource: %s", url)
+            await resources.async_create_item({"res_type": RESOURCE_TYPE, "url": url})
