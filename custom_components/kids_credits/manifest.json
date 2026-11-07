@@ -1,14 +1,14 @@
 {
     "domain": "kids_credits",
     "name": "Kids Credits",
-    "categories": ["productivity_information.calendars_todos"],
-    "documentation": "https://github.com/jonisnet/ha-kids-credits",
-    "issue_tracker": "https://github.com/jonisnet/ha-kids-credits/issues",
-    "dependencies": ["http"],
     "after_dependencies": ["lovelace"],
+    "categories": ["productivity_information.calendars_todos"],
     "codeowners": ["@jonisnet"],
-    "requirements": [],
     "config_flow": true,
+    "dependencies": ["http"],
+    "documentation": "https://github.com/jonisnet/ha-kids-credits",
     "iot_class": "local_push",
+    "issue_tracker": "https://github.com/jonisnet/ha-kids-credits/issues",
+    "requirements": [],
     "version": "0.1.9"
 }
