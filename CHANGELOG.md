@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.10
+
+### Added
+- **Logo.** Kids Credits now has its own icon, a sticker reward chart with gold stars. Home
+  Assistant shows it on the integrations page and in the Marketplace.
+- **MIT license.**
+
 ## 0.1.9
 
 ### Fixed
