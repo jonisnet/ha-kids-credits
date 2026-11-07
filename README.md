@@ -43,13 +43,23 @@ with a "Papa" view, a "Mama" view (each with one card per kid), and a shared
 
 ## Installation
 
-### HACS (custom repository)
+### Via the Marketplace (recommended)
 
-1. Go to integrations
-2. Press the dotted menu in the top right corner
-3. Choose custom repositories
-4. Add the URL to this repository, category `Integration`
-5. Install, restart Home Assistant
+Home Assistant 2026.11 and newer have HACS built in as the **Marketplace**.
+
+[![Open in the Marketplace](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=jonisnet&repository=ha-kids-credits&category=integration)
+
+1. Click the button above, or go to **Settings → Marketplace → Add from link** and enter `https://github.com/jonisnet/ha-kids-credits` (this needs the Marketplace's GitHub connection)
+2. Install **Kids Credits**
+3. Restart Home Assistant when the Marketplace asks for it (a repair offers the restart)
+
+### Via HACS (Home Assistant before 2026.11)
+
+1. Go to **HACS → Integrations → ⋮ → Custom repositories**
+2. Add `https://github.com/jonisnet/ha-kids-credits` with category **Integration**
+3. Search for **Kids Credits**, install it and restart Home Assistant
+
+On updating to Home Assistant 2026.11, an installation from HACS moves to the Marketplace by itself.
 
 ### Manual
 
@@ -59,7 +69,7 @@ Copy `custom_components/kids_credits` into your Home Assistant `custom_component
 
 The card JS registers itself as a real Lovelace resource on startup (the
 same mechanism the "Add Resource" dialog uses), specifically to avoid the
-stale-card-after-update problem some HACS integrations have. If you're on a
+stale-card-after-update problem some custom integrations have. If you're on a
 YAML-mode dashboard, or you updated but still see the old card, add the
 resource manually once: Settings → Dashboards → ⋮ → Resources → Add
 Resource → `/kids_credits_static/kids-credits-cards.js`, type JavaScript

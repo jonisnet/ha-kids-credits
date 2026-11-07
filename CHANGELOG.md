@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.1.9
+
+### Fixed
+- **Declared the `http` dependency.** The integration serves its card files through Home
+  Assistant's web server but did not list `http` in its manifest, which hassfest reports as an
+  error. Home Assistant always loads `http` first, so nothing changes for you.
+
+### Changed
+- **Installation from the Marketplace.** The README describes installing from the Marketplace
+  that replaces HACS in Home Assistant 2026.11, with HACS kept for older versions. The manifest
+  has a Marketplace category, and HACS and hassfest validation run on every push.
+
 ## 0.1.8
 
 Root-caused the "still needs a hard refresh after a restart, even after 0.1.7" reports properly
