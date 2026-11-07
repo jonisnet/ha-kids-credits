@@ -1,3 +1,5 @@
+<p align="center"><img src="custom_components/kids_credits/brand/icon.png" width="96" height="96" alt="Kids Credits logo: a sticker reward chart with gold stars"></p>
+
 # Kids Credits
 
 [![Sponsor](https://img.shields.io/badge/sponsor-ea4aaa?style=flat-square&logo=githubsponsors&logoColor=white)](https://github.com/sponsors/jonisnet)

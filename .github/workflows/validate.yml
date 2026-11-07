@@ -21,8 +21,6 @@ jobs:
       - uses: hacs/action@main
         with:
           category: integration
-          # Remove once the repository has a brand/icon.png.
-          ignore: brands
 
   hassfest:
     name: Validate with hassfest

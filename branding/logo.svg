@@ -1,0 +1,17 @@
+<svg width="200" height="200" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" role="img">
+  <title>Kids Credits logo: sticker reward chart with gold stars</title>
+  <rect x="0" y="0" width="100" height="100" rx="26" fill="#7B5CFA"/>
+  <rect x="17" y="18" width="66" height="70" rx="9" fill="#FFFFFF"/>
+  <rect x="17" y="18" width="66" height="14" rx="9" fill="#FF6B8B"/>
+  <rect x="17" y="26" width="66" height="6" fill="#FF6B8B"/>
+  <polygon points="31.00,37.40 33.01,42.23 38.23,42.65 34.25,46.06 35.47,51.15 31.00,48.42 26.53,51.15 27.75,46.06 23.77,42.65 28.99,42.23" fill="#FFC83D" stroke="#E89A00" stroke-width="1.6" stroke-linejoin="round"/>
+  <polygon points="50.00,37.40 52.01,42.23 57.23,42.65 53.25,46.06 54.47,51.15 50.00,48.42 45.53,51.15 46.75,46.06 42.77,42.65 47.99,42.23" fill="#FFC83D" stroke="#E89A00" stroke-width="1.6" stroke-linejoin="round"/>
+  <polygon points="69.00,37.40 71.01,42.23 76.23,42.65 72.25,46.06 73.47,51.15 69.00,48.42 64.53,51.15 65.75,46.06 61.77,42.65 66.99,42.23" fill="#FFC83D" stroke="#E89A00" stroke-width="1.6" stroke-linejoin="round"/>
+  <polygon points="31.00,52.40 33.01,57.23 38.23,57.65 34.25,61.06 35.47,66.15 31.00,63.42 26.53,66.15 27.75,61.06 23.77,57.65 28.99,57.23" fill="#FFC83D" stroke="#E89A00" stroke-width="1.6" stroke-linejoin="round"/>
+  <polygon points="50.00,52.40 52.01,57.23 57.23,57.65 53.25,61.06 54.47,66.15 50.00,63.42 45.53,66.15 46.75,61.06 42.77,57.65 47.99,57.23" fill="#FFC83D" stroke="#E89A00" stroke-width="1.6" stroke-linejoin="round"/>
+  <circle cx="69" cy="60" r="5.5" fill="#E9E4FF"/>
+  <circle cx="31" cy="75" r="5.5" fill="#E9E4FF"/>
+  <circle cx="50" cy="75" r="5.5" fill="#E9E4FF"/>
+  <circle cx="69" cy="75" r="5.5" fill="#E9E4FF"/>
+
+</svg>
