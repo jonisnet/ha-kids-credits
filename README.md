@@ -250,3 +250,7 @@ This integration is free and maintained in my spare time. If it's useful to you,
 
 [![Sponsor on GitHub](https://img.shields.io/badge/Sponsor-ea4aaa?style=for-the-badge&logo=githubsponsors&logoColor=white)](https://github.com/sponsors/jonisnet)
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-FFDD00?style=for-the-badge&logo=buy-me-a-coffee&logoColor=black)](https://www.buymeacoffee.com/jonisnet)
+
+## License
+
+[MIT](LICENSE)
